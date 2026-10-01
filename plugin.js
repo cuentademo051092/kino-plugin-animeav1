@@ -1,5 +1,5 @@
 // Plugin de Kino para animeav1.com
-// v1.0.5 — DUB Latino Only
+// v1.0.6 — DUB Latino Only
 //
 // Regla de idioma: SOLO se lee embeds.DUB. embeds.SUB nunca participa.
 // Fuentes soportadas directamente por este plugin:
@@ -66,63 +66,92 @@ function balancedValue(text, start) {
   return null;
 }
 
-function findEmbedsObject(text) {
-  const keys = [
-    /"embeds"\s*:/i,
-    /embeds\s*:/i,
-  ];
+function scanDubSources(text) {
+  // AnimeAV1/Nuxt puede serializar embeds como:
+  //   embeds:{SUB:[...],DUB:[...]}
+  // o como JSON:
+  //   "embeds":{"SUB":[...],"DUB":[...]}
+  // No asumimos que DUB sea un objeto JSON parseable.
 
-  for (const keyRe of keys) {
-    const m = keyRe.exec(text);
-    if (!m) continue;
+  const results = [];
+  const seen = new Set();
 
-    let i = m.index + m[0].length;
-    while (i < text.length && /\s/.test(text[i])) i++;
+  const add = (server, url) => {
+    server = String(server || "").trim();
+    url = decodeUrl(String(url || "").trim());
+    if (!url || !/^https?:\/\//i.test(url)) return;
 
-    const raw = balancedValue(text, i);
-    if (!raw) continue;
+    const key = server.toLowerCase() + "|" + url;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({ server: server || "Servidor", url });
+  };
 
-    try {
-      return JSON.parse(raw);
-    } catch (_) {
-      // Algunos payloads pueden llevar escapes adicionales; seguimos con
-      // extracción de arrays DUB más abajo.
+  // Locate every occurrence of DUB followed by an array, allowing optional
+  // quotes around the key and arbitrary whitespace.
+  const keyRe = /(?:["']?DUB["']?)\s*:\s*\[/gi;
+
+  for (const km of text.matchAll(keyRe)) {
+    const arrayStart = km.index + km[0].lastIndexOf("[");
+    let depth = 0;
+    let inString = false;
+    let quote = "";
+    let escaped = false;
+    let arrayEnd = -1;
+
+    for (let i = arrayStart; i < text.length; i++) {
+      const ch = text[i];
+
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === quote) inString = false;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+
+      if (ch === "[") depth++;
+      else if (ch === "]") {
+        depth--;
+        if (depth === 0) {
+          arrayEnd = i;
+          break;
+        }
+      }
     }
+
+    if (arrayEnd < 0) continue;
+
+    const block = text.slice(arrayStart, arrayEnd + 1);
+
+    // Standard SSR object form.
+    const objectRe = /\{[^{}]*?(?:["']?server["']?)\s*:\s*["']([^"']+)["'][^{}]*?(?:["']?url["']?)\s*:\s*["']([^"']+)["'][^{}]*\}/gi;
+    for (const m of block.matchAll(objectRe)) add(m[1], m[2]);
+
+    // Alternate property order: url before server.
+    const reverseRe = /\{[^{}]*?(?:["']?url["']?)\s*:\s*["']([^"']+)["'][^{}]*?(?:["']?server["']?)\s*:\s*["']([^"']+)["'][^{}]*\}/gi;
+    for (const m of block.matchAll(reverseRe)) add(m[2], m[1]);
+
+    if (results.length) return results;
   }
 
+  return results;
+}
+
+function findEmbedsObject(text) {
+  // Kept for compatibility with the rest of the plugin.
   return null;
 }
 
 function findDubArray(text) {
-  // AnimeAV1 SSR: embeds:{SUB:[...],DUB:[...]}
-  // Las claves y propiedades no están necesariamente entre comillas.
-  const embedsStart = text.indexOf("embeds:{");
-  const searchArea = embedsStart >= 0 ? text.slice(embedsStart) : text;
-
-  const m = /(?:^|[,{])DUB:\[([\s\S]*?)\](?:,|})/.exec(searchArea);
-  if (!m) return null;
-
-  const sources = [];
-  const seen = new Set();
-
-  // Formato real documentado: {server:"HLS",url:"https://..."}
-  const sourceRe = /\{server:"([^"]+)",url:"([^"]+)"\}/g;
-
-  for (const item of m[1].matchAll(sourceRe)) {
-    const server = item[1].trim();
-    const url = decodeUrl(item[2].trim());
-
-    if (!url || !/^https?:\/\//i.test(url)) continue;
-
-    const key = server.toLowerCase() + "|" + url;
-    if (seen.has(key)) continue;
-
-    seen.add(key);
-    sources.push({ server, url });
-  }
-
-  return sources;
+  return scanDubSources(text);
 }
+
 function normalizeSources(text) {
   const embeds = findEmbedsObject(text);
   if (embeds && Array.isArray(embeds.DUB)) return embeds.DUB;

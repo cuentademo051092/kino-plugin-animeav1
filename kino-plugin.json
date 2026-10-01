@@ -1,11 +1,12 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.0.6",
+  "version": "1.0.2",
   "apiVersion": 1,
   "entry": "plugin.js",
   "hosts": [
     "animeav1.com",
+    "cdn.animeav1.com",
     "mp4upload.com",
     "www.mp4upload.com",
     "*.mp4upload.com"

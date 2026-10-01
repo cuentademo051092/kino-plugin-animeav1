@@ -1,44 +1,39 @@
-// Plugin de Kino para animeav1.com
-// v1.0.6 — DUB Latino Only
-//
-// Regla de idioma: SOLO se lee embeds.DUB. embeds.SUB nunca participa.
-// Fuentes soportadas directamente por este plugin:
-//   1) HLS (.m3u8) dentro de DUB
-//   2) MP4Upload dentro de DUB
-// Si DUB existe pero ninguna de esas fuentes se puede resolver, se informa
-// que no hay una fuente DUB resoluble. Nunca se cambia silenciosamente a SUB.
+// AnimeAV1 para Kino
+// v1.0.2 - DUB Latino
+// Fix: AnimeAV1 expone las fuentes en el HTML de /media/{slug}/{episode}
+// como embeds:{SUB:[{server:"...",url:"..."}],DUB:[...]}.
+// La versión anterior buscaba otra representación y terminaba en
+// "no hay una fuente DUB disponible" aunque la web sí mostrara DUB.
 
 const BASE = "https://animeav1.com";
 const CDN = "https://cdn.animeav1.com";
 
 function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function decodeUrl(s) {
-  return s
-    .replace(/\\u0026/gi, "&")
-    .replace(/\\u003F/gi, "?")
-    .replace(/\\u003D/gi, "=")
-    .replace(/\\u002F/gi, "/")
+function decodeEscapes(s) {
+  return String(s)
     .replace(/\\\//g, "/")
-    .replace(/&amp;/gi, "&");
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\u003d/gi, "=")
+    .replace(/\\u002f/gi, "/")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
 }
 
-// Busca un valor JSON balanceado a partir de una posición. Ignora llaves/
-// corchetes que estén dentro de strings.
-function balancedValue(text, start) {
-  const first = text[start];
-  if (first !== "{" && first !== "[") return null;
+function extractEmbedsBlock(html) {
+  const marker = "embeds:{";
+  const start0 = html.indexOf(marker);
+  if (start0 < 0) return null;
 
-  const open = first;
-  const close = first === "{" ? "}" : "]";
+  const start = start0 + marker.length - 1; // posición de "{"
   let depth = 0;
   let inString = false;
   let escaped = false;
 
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i];
 
     if (inString) {
       if (escaped) {
@@ -56,137 +51,102 @@ function balancedValue(text, start) {
       continue;
     }
 
-    if (ch === open) depth++;
-    else if (ch === close) {
+    if (ch === "{") depth++;
+    else if (ch === "}") {
       depth--;
-      if (depth === 0) return text.slice(start, i + 1);
+      if (depth === 0) {
+        return html.slice(start + 1, i);
+      }
     }
   }
 
   return null;
 }
 
-function scanDubSources(text) {
-  // AnimeAV1/Nuxt puede serializar embeds como:
-  //   embeds:{SUB:[...],DUB:[...]}
-  // o como JSON:
-  //   "embeds":{"SUB":[...],"DUB":[...]}
-  // No asumimos que DUB sea un objeto JSON parseable.
+function extractLanguageSources(html, language) {
+  const embeds = extractEmbedsBlock(html);
+  if (!embeds) return [];
 
-  const results = [];
-  const seen = new Set();
+  const reBlock = new RegExp(
+    language + ":\\[([^\\]]*)\\]"
+  );
+  const match = embeds.match(reBlock);
+  if (!match) return [];
 
-  const add = (server, url) => {
-    server = String(server || "").trim();
-    url = decodeUrl(String(url || "").trim());
-    if (!url || !/^https?:\/\//i.test(url)) return;
+  const block = match[1];
+  const entryRe = /\{server:"([^"]+)",url:"([^"]+)"\}/g;
+  const out = [];
 
-    const key = server.toLowerCase() + "|" + url;
-    if (seen.has(key)) return;
-    seen.add(key);
-    results.push({ server: server || "Servidor", url });
+  for (const m of block.matchAll(entryRe)) {
+    const server = m[1];
+    const url = decodeEscapes(m[2]);
+    if (url.startsWith("http")) {
+      out.push({ server, url, language });
+    }
+  }
+
+  // Fallback para pequeñas variaciones del HTML.
+  if (out.length === 0) {
+    const looseRe =
+      /\{\s*server\s*:\s*["']([^"']+)["']\s*,\s*url\s*:\s*["']([^"']+)["']\s*\}/g;
+    for (const m of block.matchAll(looseRe)) {
+      const server = m[1];
+      const url = decodeEscapes(m[2]);
+      if (url.startsWith("http")) out.push({ server, url, language });
+    }
+  }
+
+  return out;
+}
+
+function getDubSources(html) {
+  return extractLanguageSources(html, "DUB");
+}
+
+function rankSources(sources) {
+  const priority = {
+    MP4Upload: 0,
+    HLS: 1,
+    UPNShare: 2,
+    Voe: 3,
+    Byse: 4,
   };
+  return [...sources].sort(
+    (a, b) => (priority[a.server] ?? 50) - (priority[b.server] ?? 50)
+  );
+}
 
-  // Locate every occurrence of DUB followed by an array, allowing optional
-  // quotes around the key and arbitrary whitespace.
-  const keyRe = /(?:["']?DUB["']?)\s*:\s*\[/gi;
+function extractMp4Url(html) {
+  const patterns = [
+    /["']file["']\s*:\s*["']([^"']+)["']/i,
+    /file\s*:\s*["']([^"']+)["']/i,
+    /type\s*:\s*["']video\/mp4["']\s*,\s*src\s*:\s*["']([^"']+)["']/i,
+    /<source[^>]+src\s*=\s*["']([^"']+)["'][^>]+type\s*=\s*["']video\/mp4["']/i,
+    /<source[^>]+type\s*=\s*["']video\/mp4["'][^>]+src\s*=\s*["']([^"']+)["']/i,
+  ];
 
-  for (const km of text.matchAll(keyRe)) {
-    const arrayStart = km.index + km[0].lastIndexOf("[");
-    let depth = 0;
-    let inString = false;
-    let quote = "";
-    let escaped = false;
-    let arrayEnd = -1;
-
-    for (let i = arrayStart; i < text.length; i++) {
-      const ch = text[i];
-
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (ch === "\\") escaped = true;
-        else if (ch === quote) inString = false;
-        continue;
-      }
-
-      if (ch === '"' || ch === "'") {
-        inString = true;
-        quote = ch;
-        continue;
-      }
-
-      if (ch === "[") depth++;
-      else if (ch === "]") {
-        depth--;
-        if (depth === 0) {
-          arrayEnd = i;
-          break;
-        }
-      }
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      const url = decodeEscapes(m[1]);
+      if (url.startsWith("http")) return url;
     }
-
-    if (arrayEnd < 0) continue;
-
-    const block = text.slice(arrayStart, arrayEnd + 1);
-
-    // Standard SSR object form.
-    const objectRe = /\{[^{}]*?(?:["']?server["']?)\s*:\s*["']([^"']+)["'][^{}]*?(?:["']?url["']?)\s*:\s*["']([^"']+)["'][^{}]*\}/gi;
-    for (const m of block.matchAll(objectRe)) add(m[1], m[2]);
-
-    // Alternate property order: url before server.
-    const reverseRe = /\{[^{}]*?(?:["']?url["']?)\s*:\s*["']([^"']+)["'][^{}]*?(?:["']?server["']?)\s*:\s*["']([^"']+)["'][^{}]*\}/gi;
-    for (const m of block.matchAll(reverseRe)) add(m[2], m[1]);
-
-    if (results.length) return results;
   }
-
-  return results;
-}
-
-function findEmbedsObject(text) {
-  // Kept for compatibility with the rest of the plugin.
   return null;
-}
-
-function findDubArray(text) {
-  return scanDubSources(text);
-}
-
-function normalizeSources(text) {
-  const embeds = findEmbedsObject(text);
-  if (embeds && Array.isArray(embeds.DUB)) return embeds.DUB;
-
-  const dub = findDubArray(text);
-  if (Array.isArray(dub)) return dub;
-
-  return [];
-}
-
-function sourceServer(source) {
-  return String(source?.server || source?.name || "").trim().toLowerCase();
-}
-
-function sourceUrl(source) {
-  const value = source?.url || source?.link || source?.src;
-  return typeof value === "string" ? decodeUrl(value) : null;
-}
-
-function isHls(url) {
-  return typeof url === "string" && /\.m3u8(?:$|[?#])/i.test(url);
-}
-
-function isMp4Upload(server, url) {
-  return server.includes("mp4upload") || /mp4upload\.com/i.test(url || "");
 }
 
 // Busca animes por nombre.
 export async function search(query) {
   const q = encodeURIComponent(query.q.trim()).replace(/%20/g, "+");
   const r = await kino.fetch(`${BASE}/catalogo/__data.json?search=${q}`);
-  if (!r.ok) throw new Error("animeav1: error buscando (HTTP " + r.status + ")");
-  const text = await r.text();
+  if (!r.ok) {
+    throw new Error("animeav1: error buscando (HTTP " + r.status + ")");
+  }
 
-  const re = /"id":\d+,"title":\d+,"synopsis":\d+,"categoryId":\d+,"slug":\d+,"category":\d+\},"(\d+)","((?:\\.|[^"\\])*)","(?:\\.|[^"\\])*",(?:\d+,)?"([^"]+)"/g;
+  const text = await r.text();
+  const re =
+    /"id":\d+,"title":\d+,"synopsis":\d+,"categoryId":\d+,"slug":\d+,"category":\d+\},"(\d+)","((?:\\.|[^"\\])*)","(?:\\.|[^"\\])*",(?:\d+,)?"([^"]+)"/g;
+
   const results = [];
   const seen = new Set();
 
@@ -194,6 +154,7 @@ export async function search(query) {
     const id = m[1];
     if (seen.has(id)) continue;
     seen.add(id);
+
     results.push({
       id,
       ref: m[3],
@@ -207,26 +168,35 @@ export async function search(query) {
   return results;
 }
 
-// Lista episodios a partir del slug.
+// Lista episodios.
 export async function episodes(ref) {
   const r = await kino.fetch(`${BASE}/media/${ref}`);
-  if (!r.ok) throw new Error("animeav1: error cargando episodios (HTTP " + r.status + ")");
-  const html = await r.text();
+  if (!r.ok) {
+    throw new Error(
+      "animeav1: error cargando episodios (HTTP " + r.status + ")"
+    );
+  }
 
+  const html = await r.text();
   const re = new RegExp("/media/" + escapeRegExp(ref) + "/(\\d+)", "g");
   const nums = [...html.matchAll(re)].map((m) => Number(m[1]));
   const unique = [...new Set(nums)].sort((a, b) => a - b);
 
-  if (unique.length === 0) throw new Error("animeav1: no se encontraron episodios");
+  if (unique.length === 0) {
+    throw new Error("animeav1: no se encontraron episodios");
+  }
 
   const idMatch = html.match(/cdn\.animeav1\.com\/backdrops\/(\d+)\.jpg/);
   const mediaId = idMatch ? idMatch[1] : null;
+
   const result = {
     episodes: unique.map((n) => ({
       season: 1,
       number: n,
       ref: `${ref}/${n}`,
-      still: mediaId ? `${CDN}/screenshots/${mediaId}/${n}.jpg` : undefined,
+      still: mediaId
+        ? `${CDN}/screenshots/${mediaId}/${n}.jpg`
+        : undefined,
     })),
   };
 
@@ -240,57 +210,73 @@ export async function episodes(ref) {
   return result;
 }
 
-// Resuelve SOLO DUB. SUB jamás se consulta como fallback.
+// Resuelve exclusivamente DUB.
 export async function resolve(ref) {
-  const r = await kino.fetch(`${BASE}/media/${ref}/__data.json`);
-  if (!r.ok) throw new Error("animeav1: error cargando episodio (HTTP " + r.status + ")");
-  const text = await r.text();
+  const pageUrl = `${BASE}/media/${ref}`;
+  const r = await kino.fetch(pageUrl);
 
-  const dubSources = normalizeSources(text);
-  if (!dubSources.length) {
-    throw new Error("animeav1: no hay una fuente DUB disponible para este episodio");
+  if (!r.ok) {
+    throw new Error(
+      "animeav1: error cargando episodio (HTTP " + r.status + ")"
+    );
   }
 
-  // 1. HLS DUB: preferido para Android TV.
-  for (const source of dubSources) {
-    const url = sourceUrl(source);
-    if (!url || !isHls(url)) continue;
+  const html = await r.text();
+  const dub = getDubSources(html);
 
-    return {
-      url,
-      mime: "application/x-mpegURL",
-      headers: { Referer: `${BASE}/media/${ref}` },
-    };
+  if (dub.length === 0) {
+    throw new Error(
+      "animeav1: no hay una fuente DUB disponible para este episodio"
+    );
   }
 
-  // 2. MP4Upload DUB: fallback.
-  for (const source of dubSources) {
-    const url = sourceUrl(source);
-    const server = sourceServer(source);
-    if (!url || !isMp4Upload(server, url)) continue;
+  const sources = rankSources(dub);
+
+  // 1) MP4Upload: es el servidor que Kino ya consigue reproducir en este sitio.
+  for (const source of sources) {
+    if (source.server !== "MP4Upload") continue;
 
     try {
-      const embedRes = await kino.fetch(url);
+      const embedRes = await kino.fetch(source.url);
       if (!embedRes.ok) continue;
 
       const embedHtml = await embedRes.text();
-      const srcMatch = embedHtml.match(
-        /type:\s*["']video\/mp4["']\s*,\s*src:\s*["']([^"']+)["']/i
-      );
+      const videoUrl = extractMp4Url(embedHtml);
 
-      if (!srcMatch) continue;
-
-      return {
-        url: decodeUrl(srcMatch[1]),
+      if (videoUrl) return {
+        url: videoUrl,
         mime: "video/mp4",
-        headers: { Referer: url },
+        headers: { Referer: source.url },
       };
     } catch (_) {
-      // Prueba el siguiente servidor DUB, sin tocar SUB.
+      // Probar la siguiente fuente DUB.
     }
   }
 
+  // 2) Si AnimeAV1 ofrece HLS DUB, devolverlo directamente.
+  const hls = sources.find(
+    (s) =>
+      s.server.toLowerCase() === "hls" ||
+      /\.m3u8(?:$|\?)/i.test(s.url)
+  );
+  if (hls) return {
+    url: hls.url,
+    mime: "application/x-mpegURL",
+    headers: { Referer: pageUrl },
+  };
+
+  const direct = sources.find((s) => /\.(mp4|m3u8)(?:[?#]|$)/i.test(s.url));
+  if (direct) {
+    return {
+      url: direct.url,
+      mime: /\.m3u8(?:[?#]|$)/i.test(direct.url) ? "application/x-mpegURL" : "video/mp4",
+      headers: { Referer: pageUrl },
+    };
+  }
+
   throw new Error(
-    "animeav1: hay DUB, pero ninguna fuente DUB compatible pudo resolverse"
+    "animeav1: DUB encontrado, pero no se pudo resolver ninguna fuente DUB (" +
+      sources.map((s) => s.server).join(", ") +
+      ")"
   );
 }

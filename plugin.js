@@ -1,5 +1,5 @@
 // Plugin de Kino para animeav1.com
-// v1.0.3 — DUB Latino Only
+// v1.0.5 — DUB Latino Only
 //
 // Regla de idioma: SOLO se lee embeds.DUB. embeds.SUB nunca participa.
 // Fuentes soportadas directamente por este plugin:
@@ -94,23 +94,35 @@ function findEmbedsObject(text) {
 }
 
 function findDubArray(text) {
-  const keyRe = /"DUB"\s*:\s*/i;
-  const m = keyRe.exec(text);
+  // AnimeAV1 SSR: embeds:{SUB:[...],DUB:[...]}
+  // Las claves y propiedades no están necesariamente entre comillas.
+  const embedsStart = text.indexOf("embeds:{");
+  const searchArea = embedsStart >= 0 ? text.slice(embedsStart) : text;
+
+  const m = /(?:^|[,{])DUB:\[([\s\S]*?)\](?:,|})/.exec(searchArea);
   if (!m) return null;
 
-  let i = m.index + m[0].length;
-  while (i < text.length && /\s/.test(text[i])) i++;
+  const sources = [];
+  const seen = new Set();
 
-  const raw = balancedValue(text, i);
-  if (!raw || raw[0] !== "[") return null;
+  // Formato real documentado: {server:"HLS",url:"https://..."}
+  const sourceRe = /\{server:"([^"]+)",url:"([^"]+)"\}/g;
 
-  try {
-    return JSON.parse(raw);
-  } catch (_) {
-    return null;
+  for (const item of m[1].matchAll(sourceRe)) {
+    const server = item[1].trim();
+    const url = decodeUrl(item[2].trim());
+
+    if (!url || !/^https?:\/\//i.test(url)) continue;
+
+    const key = server.toLowerCase() + "|" + url;
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    sources.push({ server, url });
   }
-}
 
+  return sources;
+}
 function normalizeSources(text) {
   const embeds = findEmbedsObject(text);
   if (embeds && Array.isArray(embeds.DUB)) return embeds.DUB;

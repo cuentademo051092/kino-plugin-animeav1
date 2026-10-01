@@ -1,5 +1,5 @@
 // AnimeAV1 para Kino
-// v1.0.1 - DUB Latino
+// v1.0.2 - DUB Latino
 // Fix: AnimeAV1 expone las fuentes en el HTML de /media/{slug}/{episode}
 // como embeds:{SUB:[{server:"...",url:"..."}],DUB:[...]}.
 // La versión anterior buscaba otra representación y terminaba en
@@ -243,7 +243,11 @@ export async function resolve(ref) {
       const embedHtml = await embedRes.text();
       const videoUrl = extractMp4Url(embedHtml);
 
-      if (videoUrl) return videoUrl;
+      if (videoUrl) return {
+        url: videoUrl,
+        mime: "video/mp4",
+        headers: { Referer: source.url },
+      };
     } catch (_) {
       // Probar la siguiente fuente DUB.
     }
@@ -255,7 +259,20 @@ export async function resolve(ref) {
       s.server.toLowerCase() === "hls" ||
       /\.m3u8(?:$|\?)/i.test(s.url)
   );
-  if (hls) return hls.url;
+  if (hls) return {
+    url: hls.url,
+    mime: "application/x-mpegURL",
+    headers: { Referer: pageUrl },
+  };
+
+  const direct = sources.find((s) => /\.(mp4|m3u8)(?:[?#]|$)/i.test(s.url));
+  if (direct) {
+    return {
+      url: direct.url,
+      mime: /\.m3u8(?:[?#]|$)/i.test(direct.url) ? "application/x-mpegURL" : "video/mp4",
+      headers: { Referer: pageUrl },
+    };
+  }
 
   throw new Error(
     "animeav1: DUB encontrado, pero no se pudo resolver ninguna fuente DUB (" +

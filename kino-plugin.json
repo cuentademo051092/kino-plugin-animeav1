@@ -1,19 +1,41 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.0.2",
-  "apiVersion": 1,
+  "version": "1.1.0",
+  "apiVersion": 4,
   "entry": "plugin.js",
+  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
   "hosts": [
     "animeav1.com",
     "cdn.animeav1.com",
+    "voe.sx",
+    "jeremyparticipantanything.com",
     "mp4upload.com",
-    "www.mp4upload.com",
     "*.mp4upload.com"
   ],
-  "capabilities": [
-    "search",
-    "episodes",
-    "resolve"
+  "streamHosts": "any",
+  "capabilities": ["search", "episodes", "resolve"],
+  "settings": [
+    {
+      "key": "idioma",
+      "label": "Idioma",
+      "type": "select",
+      "default": "dub",
+      "options": [
+        { "value": "dub", "label": "Solo latino" },
+        { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
+        { "value": "sub", "label": "Solo subtitulado" }
+      ]
+    },
+    {
+      "key": "servidor",
+      "label": "Servidor preferido",
+      "type": "select",
+      "default": "voe",
+      "options": [
+        { "value": "voe", "label": "Voe (720p, funciona en TV)" },
+        { "value": "mp4upload", "label": "MP4Upload (1080p AV1, celular)" }
+      ]
+    }
   ]
 }

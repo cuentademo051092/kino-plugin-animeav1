@@ -1,282 +1,311 @@
-// AnimeAV1 para Kino
-// v1.0.2 - DUB Latino
-// Fix: AnimeAV1 expone las fuentes en el HTML de /media/{slug}/{episode}
-// como embeds:{SUB:[{server:"...",url:"..."}],DUB:[...]}.
-// La versión anterior buscaba otra representación y terminaba en
-// "no hay una fuente DUB disponible" aunque la web sí mostrara DUB.
+// AnimeAV1 for Kino — v1.1.0
+//
+// Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
+// decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
+// cannot keep up, so the video never starts or stutters. Voe re-encodes the same episode to
+// H.264 720p HLS, which every TV plays. MP4Upload stays as the fallback (or first, if the
+// person picks it in Configurar).
+//
+// Data comes from SvelteKit's `__data.json` endpoints instead of scraping HTML: the same
+// payload the site's own pages hydrate from, so a layout change does not break us.
 
 const BASE = "https://animeav1.com";
 const CDN = "https://cdn.animeav1.com";
+const BROWSER_UA =
+  "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+const SEARCH_PAGES = 3;
 
-function escapeRegExp(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+// ---------------------------------------------------------------------------------------------
+// SvelteKit data
 
-function decodeEscapes(s) {
-  return String(s)
-    .replace(/\\\//g, "/")
-    .replace(/\\u0026/gi, "&")
-    .replace(/\\u003d/gi, "=")
-    .replace(/\\u002f/gi, "/")
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, "\\");
-}
-
-function extractEmbedsBlock(html) {
-  const marker = "embeds:{";
-  const start0 = html.indexOf(marker);
-  if (start0 < 0) return null;
-
-  const start = start0 + marker.length - 1; // posición de "{"
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = start; i < html.length; i++) {
-    const ch = html[i];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
+// Rebuilds a devalue-flattened array (what `__data.json` nodes carry) into plain values.
+function unflatten(flat) {
+  const cache = new Map();
+  function get(i) {
+    if (typeof i !== "number" || i < 0) return undefined;
+    if (cache.has(i)) return cache.get(i);
+    const v = flat[i];
+    if (Array.isArray(v)) {
+      // A typed value (["Date", "..."], ["Map", ...]) starts with a string tag.
+      if (typeof v[0] === "string") {
+        cache.set(i, v[1]);
+        return v[1];
       }
-      continue;
+      const out = [];
+      cache.set(i, out);
+      for (const x of v) out.push(get(x));
+      return out;
     }
-
-    if (ch === '"') {
-      inString = true;
-      continue;
+    if (v && typeof v === "object") {
+      const out = {};
+      cache.set(i, out);
+      for (const k of Object.keys(v)) out[k] = get(v[k]);
+      return out;
     }
-
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return html.slice(start + 1, i);
-      }
-    }
+    cache.set(i, v);
+    return v;
   }
-
-  return null;
+  return get(0);
 }
 
-function extractLanguageSources(html, language) {
-  const embeds = extractEmbedsBlock(html);
-  if (!embeds) return [];
-
-  const reBlock = new RegExp(
-    language + ":\\[([^\\]]*)\\]"
-  );
-  const match = embeds.match(reBlock);
-  if (!match) return [];
-
-  const block = match[1];
-  const entryRe = /\{server:"([^"]+)",url:"([^"]+)"\}/g;
-  const out = [];
-
-  for (const m of block.matchAll(entryRe)) {
-    const server = m[1];
-    const url = decodeEscapes(m[2]);
-    if (url.startsWith("http")) {
-      out.push({ server, url, language });
-    }
+async function loadData(path, what) {
+  const r = await kino.fetch(`${BASE}${path}/__data.json`, {
+    headers: { Accept: "application/json" },
+  });
+  if (r.status === 404) throw kino.error("not_found", `${what}: ${path}`);
+  if (r.status === 429) throw kino.error("rate_limited", `${what}: HTTP 429`);
+  if (!r.ok) throw kino.error("unavailable", `${what}: HTTP ${r.status}`);
+  const body = await r.json();
+  if (body.type === "redirect" || body.type === "error") {
+    throw kino.error("not_found", `${what}: ${body.type} ${path}`);
   }
-
-  // Fallback para pequeñas variaciones del HTML.
-  if (out.length === 0) {
-    const looseRe =
-      /\{\s*server\s*:\s*["']([^"']+)["']\s*,\s*url\s*:\s*["']([^"']+)["']\s*\}/g;
-    for (const m of block.matchAll(looseRe)) {
-      const server = m[1];
-      const url = decodeEscapes(m[2]);
-      if (url.startsWith("http")) out.push({ server, url, language });
-    }
-  }
-
-  return out;
+  // The page's own node is the last one with data; the earlier ones are layouts (auth, menus).
+  const nodes = (body.nodes || []).filter((n) => n && n.type === "data" && Array.isArray(n.data));
+  if (nodes.length === 0) throw kino.error("unavailable", `${what}: empty __data.json`);
+  return unflatten(nodes[nodes.length - 1].data);
 }
 
-function getDubSources(html) {
-  return extractLanguageSources(html, "DUB");
+// ---------------------------------------------------------------------------------------------
+// Items
+
+function isMovie(media) {
+  const c = media.category || {};
+  return c.slug === "pelicula" || c.malId === "Movie";
 }
 
-function rankSources(sources) {
-  const priority = {
-    MP4Upload: 0,
-    HLS: 1,
-    UPNShare: 2,
-    Voe: 3,
-    Byse: 4,
+function toItem(media) {
+  const id = String(media.id);
+  const movie = isMovie(media);
+  const item = {
+    id,
+    // A movie is resolved as its episode 1; `resolve` accepts a bare slug for that.
+    ref: media.slug,
+    title: media.title,
+    kind: movie ? "movie" : "series",
+    poster: `${CDN}/covers/${id}.jpg`,
+    backdrop: `${CDN}/backdrops/${id}.jpg`,
+    genres: ["Anime"],
   };
-  return [...sources].sort(
-    (a, b) => (priority[a.server] ?? 50) - (priority[b.server] ?? 50)
-  );
+  if (media.synopsis) item.overview = String(media.synopsis).trim();
+  const year = String(media.startDate || "").slice(0, 4);
+  if (/^\d{4}$/.test(year)) item.year = year;
+  return item;
 }
 
-function extractMp4Url(html) {
-  const patterns = [
-    /["']file["']\s*:\s*["']([^"']+)["']/i,
-    /file\s*:\s*["']([^"']+)["']/i,
-    /type\s*:\s*["']video\/mp4["']\s*,\s*src\s*:\s*["']([^"']+)["']/i,
-    /<source[^>]+src\s*=\s*["']([^"']+)["'][^>]+type\s*=\s*["']video\/mp4["']/i,
-    /<source[^>]+type\s*=\s*["']video\/mp4["'][^>]+src\s*=\s*["']([^"']+)["']/i,
-  ];
-
-  for (const re of patterns) {
-    const m = html.match(re);
-    if (m && m[1]) {
-      const url = decodeEscapes(m[1]);
-      if (url.startsWith("http")) return url;
+async function searchOnce(q) {
+  const enc = encodeURIComponent(q).replace(/%20/g, "+");
+  const first = await loadSearch(enc, 1);
+  const items = [...first.items];
+  const pages = Math.min(first.totalPages, SEARCH_PAGES);
+  for (let p = 2; p <= pages; p++) {
+    try {
+      items.push(...(await loadSearch(enc, p)).items);
+    } catch (_) {
+      break; // page 1 is enough to answer
     }
   }
-  return null;
+  return items;
 }
 
-// Busca animes por nombre.
+async function loadSearch(enc, page) {
+  const r = await kino.fetch(
+    `${BASE}/catalogo/__data.json?search=${enc}` + (page > 1 ? `&page=${page}` : ""),
+    { headers: { Accept: "application/json" } }
+  );
+  if (r.status === 429) throw kino.error("rate_limited", "search: HTTP 429");
+  if (!r.ok) throw kino.error("unavailable", "search: HTTP " + r.status);
+  const body = await r.json();
+  const nodes = (body.nodes || []).filter((n) => n && n.type === "data" && Array.isArray(n.data));
+  const data = nodes.length ? unflatten(nodes[nodes.length - 1].data) : {};
+  return {
+    items: (data.results || []).filter((m) => m && m.id != null && m.slug && m.title).map(toItem),
+    totalPages: (data.pagination && data.pagination.totalPages) || 1,
+  };
+}
+
 export async function search(query) {
-  const q = encodeURIComponent(query.q.trim()).replace(/%20/g, "+");
-  const r = await kino.fetch(`${BASE}/catalogo/__data.json?search=${q}`);
-  if (!r.ok) {
-    throw new Error("animeav1: error buscando (HTTP " + r.status + ")");
+  const tries = [query.q, query.originalTitle, ...(query.altTitles || [])]
+    .map((s) => (s || "").trim())
+    .filter((s, i, all) => s && all.indexOf(s) === i);
+
+  for (const q of tries) {
+    const items = await searchOnce(q);
+    if (items.length === 0) continue;
+    const seen = new Set();
+    const unique = items.filter((it) => !seen.has(it.id) && seen.add(it.id));
+    // `type` is only a hint: put the kind it names first, keep the rest.
+    if (query.type === "movie" || query.type === "series") {
+      unique.sort((a, b) => (a.kind === query.type ? 0 : 1) - (b.kind === query.type ? 0 : 1));
+    }
+    return unique.slice(0, 100);
   }
-
-  const text = await r.text();
-  const re =
-    /"id":\d+,"title":\d+,"synopsis":\d+,"categoryId":\d+,"slug":\d+,"category":\d+\},"(\d+)","((?:\\.|[^"\\])*)","(?:\\.|[^"\\])*",(?:\d+,)?"([^"]+)"/g;
-
-  const results = [];
-  const seen = new Set();
-
-  for (const m of text.matchAll(re)) {
-    const id = m[1];
-    if (seen.has(id)) continue;
-    seen.add(id);
-
-    results.push({
-      id,
-      ref: m[3],
-      title: m[2],
-      kind: "series",
-      poster: `${CDN}/covers/${id}.jpg`,
-      backdrop: `${CDN}/backdrops/${id}.jpg`,
-    });
-  }
-
-  return results;
+  return [];
 }
 
-// Lista episodios.
+// ---------------------------------------------------------------------------------------------
+// Episodes
+
 export async function episodes(ref) {
-  const r = await kino.fetch(`${BASE}/media/${ref}`);
-  if (!r.ok) {
-    throw new Error(
-      "animeav1: error cargando episodios (HTTP " + r.status + ")"
-    );
-  }
+  const slug = String(ref).split("/")[0];
+  const data = await loadData(`/media/${slug}`, "episodes");
+  const media = data.media;
+  if (!media) throw kino.error("not_found", "episodes: no media for " + slug);
 
-  const html = await r.text();
-  const re = new RegExp("/media/" + escapeRegExp(ref) + "/(\\d+)", "g");
-  const nums = [...html.matchAll(re)].map((m) => Number(m[1]));
-  const unique = [...new Set(nums)].sort((a, b) => a - b);
+  const id = String(media.id);
+  const nums = [...new Set((media.episodes || []).map((e) => Number(e && e.number)))]
+    .filter((n) => Number.isInteger(n) && n >= 1)
+    .sort((a, b) => a - b);
+  if (nums.length === 0) throw kino.error("not_found", "episodes: none listed for " + slug);
 
-  if (unique.length === 0) {
-    throw new Error("animeav1: no se encontraron episodios");
-  }
+  const series = {
+    title: media.title,
+    poster: `${CDN}/covers/${id}.jpg`,
+    backdrop: `${CDN}/backdrops/${id}.jpg`,
+  };
+  if (media.synopsis) series.overview = String(media.synopsis).trim();
+  const year = String(media.startDate || "").slice(0, 4);
+  if (/^\d{4}$/.test(year)) series.year = year;
 
-  const idMatch = html.match(/cdn\.animeav1\.com\/backdrops\/(\d+)\.jpg/);
-  const mediaId = idMatch ? idMatch[1] : null;
-
-  const result = {
-    episodes: unique.map((n) => ({
+  return {
+    series,
+    episodes: nums.map((n) => ({
       season: 1,
       number: n,
-      ref: `${ref}/${n}`,
-      still: mediaId
-        ? `${CDN}/screenshots/${mediaId}/${n}.jpg`
-        : undefined,
+      ref: `${slug}/${n}`,
+      still: `${CDN}/screenshots/${id}/${n}.jpg`,
     })),
   };
-
-  if (mediaId) {
-    result.series = {
-      poster: `${CDN}/covers/${mediaId}.jpg`,
-      backdrop: `${CDN}/backdrops/${mediaId}.jpg`,
-    };
-  }
-
-  return result;
 }
 
-// Resuelve exclusivamente DUB.
-export async function resolve(ref) {
-  const pageUrl = `${BASE}/media/${ref}`;
-  const r = await kino.fetch(pageUrl);
+// ---------------------------------------------------------------------------------------------
+// Hosters
 
-  if (!r.ok) {
-    throw new Error(
-      "animeav1: error cargando episodio (HTTP " + r.status + ")"
-    );
-  }
+function decodeEscapes(s) {
+  return String(s).replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\\//g, "/");
+}
 
+// MP4Upload: one progressive MP4 (AV1 10-bit 1080p today) on a:183-style hosts that only answer
+// with the site's Referer.
+async function fromMp4Upload(embedUrl) {
+  const r = await kino.fetch(embedUrl, { headers: { "User-Agent": BROWSER_UA } });
+  if (!r.ok) throw new Error("mp4upload HTTP " + r.status);
   const html = await r.text();
-  const dub = getDubSources(html);
+  const m =
+    html.match(/src\s*:\s*["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i) ||
+    html.match(/["']?file["']?\s*:\s*["'](https?:\/\/[^"']+)["']/i) ||
+    html.match(/<source[^>]+src\s*=\s*["'](https?:\/\/[^"']+)["']/i);
+  if (!m) throw new Error("mp4upload: no video in embed");
+  return {
+    url: decodeEscapes(m[1]),
+    mime: "video/mp4",
+    headers: { Referer: "https://www.mp4upload.com/", "User-Agent": BROWSER_UA },
+    expiresInSeconds: 3600,
+  };
+}
 
-  if (dub.length === 0) {
-    throw new Error(
-      "animeav1: no hay una fuente DUB disponible para este episodio"
-    );
+// Voe hides its sources in a JSON-wrapped string: rot13, junk markers, base64, a -3 char shift,
+// reversed, base64 again.
+function voeDecode(packed) {
+  let s = packed.replace(/[a-zA-Z]/g, (c) => {
+    const base = c <= "Z" ? 65 : 97;
+    return String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
+  });
+  for (const junk of ["@$", "^^", "~@", "%?", "*~", "!!", "#&"]) s = s.split(junk).join("");
+  s = atob(s);
+  let shifted = "";
+  for (let i = 0; i < s.length; i++) shifted += String.fromCharCode(s.charCodeAt(i) - 3);
+  return JSON.parse(atob(shifted.split("").reverse().join("")));
+}
+
+function voeSourceFrom(html) {
+  const packed = html.match(/<script type="application\/json">\s*\[\s*"([^"]+)"\s*\]\s*<\/script>/);
+  if (packed) {
+    const data = voeDecode(packed[1]);
+    if (data && data.source) return data.source;
   }
+  // Older Voe pages.
+  const hls = html.match(/["']hls["']\s*:\s*["']([^"']+)["']/);
+  if (hls) {
+    const v = hls[1];
+    return v.startsWith("http") ? v : atob(v);
+  }
+  return null;
+}
 
-  const sources = rankSources(dub);
-
-  // 1) MP4Upload: es el servidor que Kino ya consigue reproducir en este sitio.
-  for (const source of sources) {
-    if (source.server !== "MP4Upload") continue;
-
-    try {
-      const embedRes = await kino.fetch(source.url);
-      if (!embedRes.ok) continue;
-
-      const embedHtml = await embedRes.text();
-      const videoUrl = extractMp4Url(embedHtml);
-
-      if (videoUrl) return {
-        url: videoUrl,
-        mime: "video/mp4",
-        headers: { Referer: source.url },
+// Voe: voe.sx answers with a JS redirect to a mirror domain that rotates now and then; the
+// mirror holds the player. The HLS lives on a CDN whose domain rotates too (hence streamHosts).
+async function fromVoe(embedUrl) {
+  let url = embedUrl;
+  for (let hop = 0; hop < 3; hop++) {
+    const r = await kino.fetch(url, { headers: { "User-Agent": BROWSER_UA } });
+    if (!r.ok) throw new Error("voe HTTP " + r.status);
+    const html = await r.text();
+    const source = voeSourceFrom(html);
+    if (source) {
+      return {
+        url: source,
+        mime: "application/vnd.apple.mpegurl",
+        headers: { "User-Agent": BROWSER_UA },
+        expiresInSeconds: 3 * 3600,
       };
-    } catch (_) {
-      // Probar la siguiente fuente DUB.
+    }
+    const next = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/);
+    if (!next) break;
+    url = next[1];
+  }
+  throw new Error("voe: no source in page");
+}
+
+const RESOLVERS = { Voe: fromVoe, MP4Upload: fromMp4Upload };
+
+// ---------------------------------------------------------------------------------------------
+// Resolve
+
+function languagesToTry() {
+  switch (kino.config.get("idioma")) {
+    case "sub":
+      return ["SUB"];
+    case "dub-sub":
+      return ["DUB", "SUB"];
+    default:
+      return ["DUB"];
+  }
+}
+
+function serverOrder() {
+  return kino.config.get("servidor") === "mp4upload" ? ["MP4Upload", "Voe"] : ["Voe", "MP4Upload"];
+}
+
+export async function resolve(ref) {
+  const [slug, rawNum] = String(ref).split("/");
+  const number = rawNum || "1";
+  const data = await loadData(`/media/${slug}/${number}`, "resolve");
+  const embeds = data.embeds || {};
+
+  const langs = languagesToTry();
+  const order = serverOrder();
+  const failures = [];
+
+  for (const lang of langs) {
+    const list = (embeds[lang] || []).filter((e) => e && e.url && RESOLVERS[e.server]);
+    list.sort((a, b) => order.indexOf(a.server) - order.indexOf(b.server));
+    for (const e of list) {
+      try {
+        return await RESOLVERS[e.server](e.url);
+      } catch (err) {
+        if (err && err.code === "host_not_allowed") failures.push(`${lang}/${e.server}: host rejected`);
+        else failures.push(`${lang}/${e.server}: ${err && err.message}`);
+        kino.log("animeav1:", lang, e.server, "failed:", err && err.message);
+      }
     }
   }
 
-  // 2) Si AnimeAV1 ofrece HLS DUB, devolverlo directamente.
-  const hls = sources.find(
-    (s) =>
-      s.server.toLowerCase() === "hls" ||
-      /\.m3u8(?:$|\?)/i.test(s.url)
-  );
-  if (hls) return {
-    url: hls.url,
-    mime: "application/x-mpegURL",
-    headers: { Referer: pageUrl },
-  };
-
-  const direct = sources.find((s) => /\.(mp4|m3u8)(?:[?#]|$)/i.test(s.url));
-  if (direct) {
-    return {
-      url: direct.url,
-      mime: /\.m3u8(?:[?#]|$)/i.test(direct.url) ? "application/x-mpegURL" : "video/mp4",
-      headers: { Referer: pageUrl },
-    };
+  const offered = Object.keys(embeds).join(", ") || "none";
+  if (failures.length === 0) {
+    throw kino.error(
+      "not_found",
+      `no ${langs.join("/")} source for ${slug}/${number} (site offers: ${offered})`
+    );
   }
-
-  throw new Error(
-    "animeav1: DUB encontrado, pero no se pudo resolver ninguna fuente DUB (" +
-      sources.map((s) => s.server).join(", ") +
-      ")"
-  );
+  throw kino.error("unavailable", failures.join("; "));
 }

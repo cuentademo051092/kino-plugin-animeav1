@@ -1,0 +1,9 @@
+{
+  "id": "animeav1",
+  "name": "AnimeAV1",
+  "version": "0.7.0",
+  "apiVersion": 1,
+  "entry": "plugin.js",
+  "hosts": ["animeav1.com", "mp4upload.com", "www.mp4upload.com", "*.mp4upload.com"],
+  "capabilities": ["search", "episodes", "resolve"]
+}

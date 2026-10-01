@@ -125,73 +125,6 @@ export async function episodes(ref) {
 
 // Resuelve primero HLS. Si no existe, usa MP4Upload.
 // Esto evita depender de un único codec/container cuando el dispositivo es un Android TV.
-// v0.9.0 — DUB Latino Only
-// Solo acepta fuentes marcadas como DUB. Nunca hace fallback a SUB.
-// Dentro de DUB: HLS primero, MP4Upload como respaldo.
-
-function languageNear(text, index) {
-  const radius = 4000;
-  const start = Math.max(0, index - radius);
-  const end = Math.min(text.length, index + radius);
-  const area = text.slice(start, end);
-
-  const matches = [...area.matchAll(/"?(DUB|SUB)"?\s*:/gi)];
-  if (!matches.length) return null;
-
-  const absolute = matches.map(m => ({
-    lang: m[1].toUpperCase(),
-    index: start + m.index
-  }));
-
-  absolute.sort((a, b) =>
-    Math.abs(a.index - index) - Math.abs(b.index - index)
-  );
-
-  return absolute[0].lang;
-}
-
-function collectDubHls(text) {
-  const out = [];
-  const seen = new Set();
-
-  const re = /https?:\\?\/?\\?\/?[^"'\\s<>]+?\.m3u8(?:\?[^"'\\s<>\\]*)?/gi;
-
-  for (const m of text.matchAll(re)) {
-    const url = decodeUrl(m[0]);
-    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
-
-    const lang = languageNear(text, m.index);
-    if (lang !== "DUB") continue;
-
-    seen.add(url);
-    out.push({ url, index: m.index });
-  }
-
-  return out;
-}
-
-function collectDubMp4Upload(text) {
-  const out = [];
-  const seen = new Set();
-
-  const re = /"MP4Upload"\s*[,\:]\s*"(https:\/\/(?:www\.)?mp4upload\.com\/embed-[a-zA-Z0-9]+\.html)"/gi;
-
-  for (const m of text.matchAll(re)) {
-    const url = m[1];
-    if (seen.has(url)) continue;
-
-    const lang = languageNear(text, m.index);
-    if (lang !== "DUB") continue;
-
-    seen.add(url);
-    out.push({ url, index: m.index });
-  }
-
-  return out;
-}
-
-// Resuelve SOLO DUB. Si DUB no está disponible, devuelve error.
-// Jamás cambia silenciosamente a SUB.
 export async function resolve(ref) {
   const r = await kino.fetch(`${BASE}/media/${ref}/__data.json`);
 
@@ -203,44 +136,100 @@ export async function resolve(ref) {
 
   const text = await r.text();
 
-  // 1. DUB HLS — preferido para Android TV.
-  const hls = collectDubHls(text);
+  // DUB ONLY:
+  // Separa DUB/SUB por proximidad y jamás permite usar una fuente SUB.
+  function nearestLanguage(index) {
+    const matches = [];
+    const re = /"?(DUB|SUB)"?\s*:/gi;
 
-  if (hls.length > 0) {
+    for (const m of text.matchAll(re)) {
+      matches.push({
+        lang: m[1].toUpperCase(),
+        index: m.index
+      });
+    }
+
+    if (!matches.length) return null;
+
+    let best = null;
+    let distance = Infinity;
+
+    for (const item of matches) {
+      const d = Math.abs(item.index - index);
+      if (d < distance) {
+        distance = d;
+        best = item.lang;
+      }
+    }
+
+    return best;
+  }
+
+  function decodeUrl(url) {
+    return url
+      .replace(/\\u0026/g, "&")
+      .replace(/\\u003F/g, "?")
+      .replace(/\\u002F/g, "/")
+      .replace(/\\\//g, "/")
+      .replace(/&amp;/g, "&");
+  }
+
+  // Primero busca HLS perteneciente al bloque DUB.
+  const hlsUrls = [];
+  const hlsRe =
+    /https?:\/\/[^"'\\\s<>]+?\.m3u8(?:\?[^"'\\\s<>]*)?/gi;
+
+  for (const m of text.matchAll(hlsRe)) {
+    const url = decodeUrl(m[0]);
+    if (nearestLanguage(m.index) === "DUB" && !hlsUrls.includes(url)) {
+      hlsUrls.push(url);
+    }
+  }
+
+  if (hlsUrls.length) {
     return {
-      url: hls[0].url,
+      url: hlsUrls[0],
       mime: "application/x-mpegURL",
       headers: {
-        Referer: `${BASE}/media/${ref}`,
-      },
+        Referer: `${BASE}/media/${ref}`
+      }
     };
   }
 
-  // 2. DUB MP4Upload — respaldo, siempre DUB.
-  const embeds = collectDubMp4Upload(text);
+  // Después busca MP4Upload, pero SOLO si pertenece a DUB.
+  const embeds = [];
+  const mp4Re =
+    /"MP4Upload"\s*[,:]\s*"(https:\/\/(?:www\.)?mp4upload\.com\/embed-[A-Za-z0-9]+\.html)"/gi;
 
-  for (const mp4 of embeds) {
+  for (const m of text.matchAll(mp4Re)) {
+    const url = m[1];
+
+    if (nearestLanguage(m.index) === "DUB" && !embeds.includes(url)) {
+      embeds.push(url);
+    }
+  }
+
+  for (const embedUrl of embeds) {
     try {
-      const embedRes = await kino.fetch(mp4.url);
+      const embedRes = await kino.fetch(embedUrl);
       if (!embedRes.ok) continue;
 
-      const embedHtml = await embedRes.text();
-
-      const srcMatch = embedHtml.match(
+      const html = await embedRes.text();
+      const src = html.match(
         /type:\s*"video\/mp4",\s*src:\s*"([^"]+)"/
       );
 
-      if (!srcMatch) continue;
+      if (!src) continue;
 
       return {
-        url: decodeUrl(srcMatch[1]),
+        url: decodeUrl(src[1]),
         mime: "video/mp4",
         headers: {
-          Referer: mp4.url,
-        },
+          Referer: embedUrl
+        }
       };
     } catch (_) {
-      // Prueba el siguiente servidor DUB, sin pasar a SUB.
+      // Continúa con el siguiente servidor DUB.
     }
   }
 

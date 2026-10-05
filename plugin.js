@@ -232,37 +232,16 @@ function voeSourceFrom(html) {
   return null;
 }
 
-const BLOCKED_VOE_HOSTS = new Set(["teresapoliticallyearn.com"]);
-
-function isBlockedVoeHost(value) {
-  try {
-    const host = new URL(String(value)).hostname.toLowerCase();
-    for (const blocked of BLOCKED_VOE_HOSTS) {
-      if (host === blocked || host.endsWith("." + blocked)) return true;
-    }
-  } catch (_) {}
-  return false;
-}
-
-function assertVoeHostAllowed(value) {
-  if (isBlockedVoeHost(value)) {
-    throw kino.error("host_blocked", "Voe: blocked unwanted host");
-  }
-}
-
 // Voe: voe.sx answers with a JS redirect to a mirror domain that rotates now and then; the
 // mirror holds the player. The HLS lives on a CDN whose domain rotates too (hence streamHosts).
 async function fromVoe(embedUrl) {
   let url = embedUrl;
-  assertVoeHostAllowed(url);
   for (let hop = 0; hop < 3; hop++) {
-    assertVoeHostAllowed(url);
     const r = await kino.fetch(url, { headers: { "User-Agent": BROWSER_UA } });
     if (!r.ok) throw new Error("voe HTTP " + r.status);
     const html = await r.text();
     const source = voeSourceFrom(html);
     if (source) {
-      assertVoeHostAllowed(source);
       return {
         url: source,
         mime: "application/vnd.apple.mpegurl",
@@ -272,7 +251,6 @@ async function fromVoe(embedUrl) {
     }
     const next = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/);
     if (!next) break;
-    assertVoeHostAllowed(next[1]);
     url = next[1];
   }
   throw new Error("voe: no source in page");
@@ -294,8 +272,8 @@ function languagesToTry() {
   }
 }
 
-function selectedServer() {
-  return kino.config.get("servidor") === "mp4upload" ? "MP4Upload" : "Voe";
+function serverOrder() {
+  return kino.config.get("servidor") === "mp4upload" ? ["MP4Upload", "Voe"] : ["Voe", "MP4Upload"];
 }
 
 export async function resolve(ref) {
@@ -305,13 +283,12 @@ export async function resolve(ref) {
   const embeds = data.embeds || {};
 
   const langs = languagesToTry();
-  const selected = selectedServer();
+  const order = serverOrder();
   const failures = [];
 
   for (const lang of langs) {
-    const list = (embeds[lang] || []).filter(
-      (e) => e && e.url && e.server === selected && RESOLVERS[e.server]
-    );
+    const list = (embeds[lang] || []).filter((e) => e && e.url && RESOLVERS[e.server]);
+    list.sort((a, b) => order.indexOf(a.server) - order.indexOf(b.server));
     for (const e of list) {
       try {
         return await RESOLVERS[e.server](e.url);

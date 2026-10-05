@@ -1,10 +1,10 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.1.2",
+  "version": "1.1.0",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Voe 720p para TV y MP4Upload 1080p AV1 para dispositivos compatibles, según tu elección.",
+  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
   "hosts": [
     "animeav1.com",
     "cdn.animeav1.com",

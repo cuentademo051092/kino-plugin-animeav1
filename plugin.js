@@ -1,11 +1,10 @@
 /**
- * Plugin de AnimeAV1 para Kino
- * Configuración: Pantalla de inicio personalizada + 6 Géneros en Categorías.
+ * Plugin de AnimeAV1 para Kino v1.3.0
  */
 
 const BASE_URL = "https://animeav1.com";
 
-// Función auxiliar para descargar y parsear el contenido HTML de animeav1.com
+// Función auxiliar para descargar y parsear el HTML
 async function fetchDOM(url) {
   const res = await kino.fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
@@ -14,13 +13,12 @@ async function fetchDOM(url) {
   return kino.parseHTML(html);
 }
 
-// --- MANEJO DE CATÁLOGOS Y GÉNEROS ---
-// Esta función carga las filas de la pantalla de inicio y las secciones de categorías.
+// --- CATALOG (INICIO Y GÉNEROS) ---
 async function catalog(id, page = 1) {
   let url = BASE_URL;
 
   switch (id) {
-    // 1. Filas de la Pantalla de Inicio
+    // Pantalla de Inicio (5 Filas)
     case "ultimos":
       url = `${BASE_URL}/episodes?page=${page}`;
       break;
@@ -30,14 +28,14 @@ async function catalog(id, page = 1) {
     case "populares":
       url = `${BASE_URL}/catalogo?order=popular&page=${page}`;
       break;
-    case "peliculas":
-      url = `${BASE_URL}/catalogo?type=movie&page=${page}`;
-      break;
     case "series":
       url = `${BASE_URL}/catalogo?type=tv-anime&page=${page}`;
       break;
+    case "peliculas":
+      url = `${BASE_URL}/catalogo?type=movie&page=${page}`;
+      break;
 
-    // 2. Filas por Géneros (Sección Categorías)
+    // Sección Categorías (6 Géneros)
     case "shounen":
       url = `${BASE_URL}/catalogo?genre=shounen&page=${page}`;
       break;
@@ -63,9 +61,12 @@ async function catalog(id, page = 1) {
 
   const doc = await fetchDOM(url);
   const items = [];
-  
-  // Usar selector de episodios si es el catálogo "últimos", o selector de animes para los demás
-  const selector = id === "ultimos" ? ".episode-item, .anime-card, article" : ".anime-card, .article-anime, article";
+
+  // Usar selector según el tipo de catálogo
+  const selector = id === "ultimos" 
+    ? ".episode-item, .anime-card, article" 
+    : ".anime-card, .article-anime, article";
+    
   const elements = doc.querySelectorAll(selector);
 
   elements.forEach((el) => {
@@ -86,7 +87,7 @@ async function catalog(id, page = 1) {
         title: title,
         poster: fullPoster,
         backdrop: fullPoster,
-        type: id === "peliculas" ? "movie" : "series"
+        type: id === "peliculas" ? "movie" : "tv"
       });
     }
   });
@@ -94,8 +95,7 @@ async function catalog(id, page = 1) {
   return items;
 }
 
-// --- BUSCADOR ---
-// Procesa la barra de búsqueda global en la app Kino
+// --- BÚSQUEDA GLOBAL ---
 async function search(query) {
   const doc = await fetchDOM(`${BASE_URL}/catalogo?q=${encodeURIComponent(query)}`);
   const items = [];
@@ -114,7 +114,7 @@ async function search(query) {
         id: href.startsWith("http") ? href : `${BASE_URL}${href}`,
         title: title,
         poster: poster.startsWith("http") ? poster : `${BASE_URL}${poster}`,
-        type: "series"
+        type: "tv"
       });
     }
   });
@@ -122,8 +122,7 @@ async function search(query) {
   return items;
 }
 
-// --- LISTA DE EPISODIOS ---
-// Extrae la lista de capítulos de la página de un anime en particular
+// --- OBTENER EPISODIOS ---
 async function episodes(seriesId) {
   const doc = await fetchDOM(seriesId);
   const epList = [];
@@ -143,8 +142,7 @@ async function episodes(seriesId) {
   return epList;
 }
 
-// --- RESOLUCIÓN DE SERVIDORES Y REPRODUCCIÓN ---
-// Extrae las URLs de video (VOE, MP4Upload, etc.) para que Kino pueda reproducirlos
+// --- REPRODUCTORES Y SERVIDORES (VOE vs MP4Upload) ---
 async function resolve(episodeId) {
   const doc = await fetchDOM(episodeId);
   const streams = [];
@@ -153,7 +151,7 @@ async function resolve(episodeId) {
   for (const iframe of iframes) {
     const src = iframe.getAttribute("src") || iframe.getAttribute("data-src") || "";
 
-    // Servidores VOE y espejos
+    // Servidores espejo de VOE
     if (src.includes("voe") || src.includes("jeremy") || src.includes("teresa")) {
       streams.push({
         name: "Voe (720p HD)",
@@ -174,7 +172,7 @@ async function resolve(episodeId) {
     }
   }
 
-  // Si no se encontraron en iframe, buscar botones de selección de servidor
+  // Alternativa en caso de usar botones en lugar de iframes directos
   if (streams.length === 0) {
     doc.querySelectorAll(".server-option, [data-player]").forEach((btn) => {
       const pUrl = btn.getAttribute("data-player") || btn.getAttribute("value");
@@ -190,4 +188,5 @@ async function resolve(episodeId) {
   }
 
   return streams;
-    }
+  }
+

@@ -1,7 +1,7 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "apiVersion": 4,
   "entry": "plugin.js",
   "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
@@ -11,7 +11,6 @@
     "voe.sx",
     "jeremyparticipantanything.com",
     "teresapoliticallearn.com",
-    "*.teresapoliticallearn.com",
     "mp4upload.com",
     "*.mp4upload.com"
   ],

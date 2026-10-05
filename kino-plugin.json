@@ -19,18 +19,32 @@
     "*.mp4upload.com"
   ],
   "streamHosts": "any",
-  "capabilities": ["search", "episodes", "resolve", "catalogs"],
+  "capabilities": ["search", "episodes", "resolve", "catalog"],
   "catalogs": [
-    { "id": "ultimos", "name": "Últimos", "type": "tv" },
-    { "id": "emision", "name": "En emisión", "type": "tv" },
-    { "id": "populares", "name": "Animes Populares", "type": "tv" },
+    { "id": "ultimos", "name": "Últimos Episodios", "type": "tv" },
+    { "id": "emision", "name": "En Emisión", "type": "tv" },
+    { "id": "populares", "name": "Populares", "type": "tv" },
+    { "id": "series", "name": "Series y Animes", "type": "tv" },
     { "id": "peliculas", "name": "Películas", "type": "movie" },
-    { "id": "series", "name": "Series", "type": "tv" },
     { "id": "shounen", "name": "Acción / Shounen", "type": "tv" },
     { "id": "romance", "name": "Romance / Comedia", "type": "tv" },
     { "id": "fantasia", "name": "Fantasía / Isekai", "type": "tv" },
-    { "id": "scifi", "name": "Ciencia Ficción / Sobrenatural", "type": "tv" },
+    { "id": "scifi", "name": "Ciencia Ficción", "type": "tv" },
     { "id": "aventura", "name": "Aventura / Drama", "type": "tv" },
     { "id": "ecchi", "name": "Ecchi / Seinen", "type": "tv" }
+  ],
+  "settings": [
+    {
+      "key": "idioma",
+      "label": "Idioma preferido",
+      "type": "select",
+      "default": "dub",
+      "options": [
+        { "value": "dub", "label": "Solo latino" },
+        { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
+        { "value": "sub", "label": "Solo subtitulado" }
+      ]
+    }
   ]
 }
+

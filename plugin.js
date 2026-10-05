@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.1.1 Secure Audit
+// AnimeAV1 for Kino — v1.1.0
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -14,46 +14,6 @@ const CDN = "https://cdn.animeav1.com";
 const BROWSER_UA =
   "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 const SEARCH_PAGES = 3;
-
-// Security/audit layer:
-// - Does NOT add remote calls.
-// - Does NOT send telemetry anywhere.
-// - Does NOT block legitimate dynamic Voe/CDN hosts.
-// - Only records the hostname actually touched by the resolver, so an unexpected
-//   redirect can be identified without sacrificing the plugin's existing behavior.
-const AUDIT_PREFIX = "animeav1-audit:";
-const DECLARED_HOSTS = [
-  "animeav1.com",
-  "cdn.animeav1.com",
-  "voe.sx",
-  "jeremyparticipantanything.com",
-  "mp4upload.com",
-];
-
-function hostOf(value) {
-  try {
-    return new URL(String(value)).hostname.toLowerCase();
-  } catch (_) {
-    return "";
-  }
-}
-
-function isDeclaredHost(host) {
-  const h = String(host || "").toLowerCase();
-  return DECLARED_HOSTS.some((d) => h === d || h.endsWith("." + d));
-}
-
-function auditHost(stage, value) {
-  const host = hostOf(value);
-  if (!host) {
-    kino.log(AUDIT_PREFIX, stage, "invalid-url");
-    return host;
-  }
-  const status = isDeclaredHost(host) ? "declared" : "UNDECLARED";
-  // Never log query strings/tokens; hostname only.
-  kino.log(AUDIT_PREFIX, stage, status, host);
-  return host;
-}
 
 // ---------------------------------------------------------------------------------------------
 // SvelteKit data
@@ -227,7 +187,6 @@ function decodeEscapes(s) {
 // MP4Upload: one progressive MP4 (AV1 10-bit 1080p today) on a:183-style hosts that only answer
 // with the site's Referer.
 async function fromMp4Upload(embedUrl) {
-  auditHost("mp4/embed", embedUrl);
   const r = await kino.fetch(embedUrl, { headers: { "User-Agent": BROWSER_UA } });
   if (!r.ok) throw new Error("mp4upload HTTP " + r.status);
   const html = await r.text();
@@ -236,10 +195,8 @@ async function fromMp4Upload(embedUrl) {
     html.match(/["']?file["']?\s*:\s*["'](https?:\/\/[^"']+)["']/i) ||
     html.match(/<source[^>]+src\s*=\s*["'](https?:\/\/[^"']+)["']/i);
   if (!m) throw new Error("mp4upload: no video in embed");
-  const mediaUrl = decodeEscapes(m[1]);
-  auditHost("mp4/media", mediaUrl);
   return {
-    url: mediaUrl,
+    url: decodeEscapes(m[1]),
     mime: "video/mp4",
     headers: { Referer: "https://www.mp4upload.com/", "User-Agent": BROWSER_UA },
     expiresInSeconds: 3600,
@@ -279,17 +236,12 @@ function voeSourceFrom(html) {
 // mirror holds the player. The HLS lives on a CDN whose domain rotates too (hence streamHosts).
 async function fromVoe(embedUrl) {
   let url = embedUrl;
-  auditHost("voe/embed", url);
-
   for (let hop = 0; hop < 3; hop++) {
-    auditHost("voe/fetch-" + hop, url);
     const r = await kino.fetch(url, { headers: { "User-Agent": BROWSER_UA } });
     if (!r.ok) throw new Error("voe HTTP " + r.status);
     const html = await r.text();
-
     const source = voeSourceFrom(html);
     if (source) {
-      auditHost("voe/stream", source);
       return {
         url: source,
         mime: "application/vnd.apple.mpegurl",
@@ -297,14 +249,10 @@ async function fromVoe(embedUrl) {
         expiresInSeconds: 3 * 3600,
       };
     }
-
     const next = html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/);
     if (!next) break;
-
-    auditHost("voe/redirect-" + hop, next[1]);
     url = next[1];
   }
-
   throw new Error("voe: no source in page");
 }
 
@@ -324,10 +272,6 @@ function languagesToTry() {
   }
 }
 
-function serverOrder() {
-  return kino.config.get("servidor") === "mp4upload" ? ["MP4Upload", "Voe"] : ["Voe", "MP4Upload"];
-}
-
 export async function resolve(ref) {
   const [slug, rawNum] = String(ref).split("/");
   const number = rawNum || "1";
@@ -335,15 +279,16 @@ export async function resolve(ref) {
   const embeds = data.embeds || {};
 
   const langs = languagesToTry();
-  const order = serverOrder();
+  const selected = kino.config.get("servidor") === "mp4upload" ? "MP4Upload" : "Voe";
   const failures = [];
 
   for (const lang of langs) {
-    const list = (embeds[lang] || []).filter((e) => e && e.url && RESOLVERS[e.server]);
-    list.sort((a, b) => order.indexOf(a.server) - order.indexOf(b.server));
+    // La elección del usuario es estricta: nunca cambiar de Voe a MP4Upload ni viceversa.
+    const list = (embeds[lang] || []).filter(
+      (e) => e && e.url && e.server === selected && RESOLVERS[e.server]
+    );
     for (const e of list) {
       try {
-        auditHost("embed/" + lang + "/" + e.server, e.url);
         return await RESOLVERS[e.server](e.url);
       } catch (err) {
         if (err && err.code === "host_not_allowed") failures.push(`${lang}/${e.server}: host rejected`);
@@ -357,7 +302,7 @@ export async function resolve(ref) {
   if (failures.length === 0) {
     throw kino.error(
       "not_found",
-      `no ${langs.join("/")} source for ${slug}/${number} (site offers: ${offered})`
+      `no ${langs.join("/")} source on ${selected} for ${slug}/${number} (site offers: ${offered})`
     );
   }
   throw kino.error("unavailable", failures.join("; "));

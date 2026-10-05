@@ -7,12 +7,16 @@
   "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
   "hosts": [
     "animeav1.com",
+    "*.animeav1.com",
     "cdn.animeav1.com",
     "voe.sx",
     "*.voe.sx",
+    "teresapoliticallearn.com",
+    "*.teresapoliticallearn.com",
+    "jeremyparticipantanything.com",
+    "*.jeremyparticipantanything.com",
     "mp4upload.com",
-    "*.mp4upload.com",
-    "*"
+    "*.mp4upload.com"
   ],
   "streamHosts": "any",
   "capabilities": ["search", "episodes", "resolve"],
@@ -40,3 +44,4 @@
     }
   ]
 }
+

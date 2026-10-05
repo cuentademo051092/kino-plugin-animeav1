@@ -1,10 +1,10 @@
 /**
- * Plugin de AnimeAV1 para Kino v1.3.0
+ * Plugin AnimeAV1 para Kino v1.1.0
  */
 
 const BASE_URL = "https://animeav1.com";
 
-// Función auxiliar para descargar y parsear el HTML
+// Función auxiliar para peticiones HTML
 async function fetchDOM(url) {
   const res = await kino.fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
@@ -13,12 +13,11 @@ async function fetchDOM(url) {
   return kino.parseHTML(html);
 }
 
-// --- CATALOG (INICIO Y GÉNEROS) ---
+// 1. CATÁLOGOS Y GÉNEROS
 async function catalog(id, page = 1) {
   let url = BASE_URL;
 
   switch (id) {
-    // Pantalla de Inicio (5 Filas)
     case "ultimos":
       url = `${BASE_URL}/episodes?page=${page}`;
       break;
@@ -34,8 +33,6 @@ async function catalog(id, page = 1) {
     case "peliculas":
       url = `${BASE_URL}/catalogo?type=movie&page=${page}`;
       break;
-
-    // Sección Categorías (6 Géneros)
     case "shounen":
       url = `${BASE_URL}/catalogo?genre=shounen&page=${page}`;
       break;
@@ -54,7 +51,6 @@ async function catalog(id, page = 1) {
     case "ecchi":
       url = `${BASE_URL}/catalogo?genre=ecchi&page=${page}`;
       break;
-
     default:
       url = `${BASE_URL}/catalogo?page=${page}`;
   }
@@ -62,7 +58,6 @@ async function catalog(id, page = 1) {
   const doc = await fetchDOM(url);
   const items = [];
 
-  // Usar selector según el tipo de catálogo
   const selector = id === "ultimos" 
     ? ".episode-item, .anime-card, article" 
     : ".anime-card, .article-anime, article";
@@ -95,7 +90,7 @@ async function catalog(id, page = 1) {
   return items;
 }
 
-// --- BÚSQUEDA GLOBAL ---
+// 2. BÚSQUEDA
 async function search(query) {
   const doc = await fetchDOM(`${BASE_URL}/catalogo?q=${encodeURIComponent(query)}`);
   const items = [];
@@ -122,7 +117,7 @@ async function search(query) {
   return items;
 }
 
-// --- OBTENER EPISODIOS ---
+// 3. EPISODIOS
 async function episodes(seriesId) {
   const doc = await fetchDOM(seriesId);
   const epList = [];
@@ -142,7 +137,7 @@ async function episodes(seriesId) {
   return epList;
 }
 
-// --- REPRODUCTORES Y SERVIDORES (VOE vs MP4Upload) ---
+// 4. RESOLVER REPRODUCTORES
 async function resolve(episodeId) {
   const doc = await fetchDOM(episodeId);
   const streams = [];
@@ -151,7 +146,6 @@ async function resolve(episodeId) {
   for (const iframe of iframes) {
     const src = iframe.getAttribute("src") || iframe.getAttribute("data-src") || "";
 
-    // Servidores espejo de VOE
     if (src.includes("voe") || src.includes("jeremy") || src.includes("teresa")) {
       streams.push({
         name: "Voe (720p HD)",
@@ -161,7 +155,6 @@ async function resolve(episodeId) {
       });
     }
 
-    // Servidor MP4Upload
     if (src.includes("mp4upload")) {
       streams.push({
         name: "MP4Upload (1080p Full HD)",
@@ -172,21 +165,10 @@ async function resolve(episodeId) {
     }
   }
 
-  // Alternativa en caso de usar botones en lugar de iframes directos
-  if (streams.length === 0) {
-    doc.querySelectorAll(".server-option, [data-player]").forEach((btn) => {
-      const pUrl = btn.getAttribute("data-player") || btn.getAttribute("value");
-      if (pUrl) {
-        streams.push({
-          name: "Servidor Secundario",
-          quality: "720p",
-          url: pUrl.startsWith("//") ? `https:${pUrl}` : pUrl,
-          type: "embed"
-        });
-      }
-    });
-  }
-
   return streams;
-  }
+}
 
+// EXPORTACIÓN OBLIGATORIA PARA KINO API V4
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { catalog, search, episodes, resolve };
+}

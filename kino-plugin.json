@@ -4,7 +4,7 @@
   "version": "1.1.2",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. La elección de servidor es estricta: Voe o MP4Upload, sin cambio automático entre servidores.",
+  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Voe 720p para TV y MP4Upload 1080p AV1 para dispositivos compatibles, según tu elección.",
   "hosts": [
     "animeav1.com",
     "cdn.animeav1.com",
@@ -14,11 +14,7 @@
     "*.mp4upload.com"
   ],
   "streamHosts": "any",
-  "capabilities": [
-    "search",
-    "episodes",
-    "resolve"
-  ],
+  "capabilities": ["search", "episodes", "resolve"],
   "settings": [
     {
       "key": "idioma",
@@ -26,18 +22,9 @@
       "type": "select",
       "default": "dub",
       "options": [
-        {
-          "value": "dub",
-          "label": "Solo latino"
-        },
-        {
-          "value": "dub-sub",
-          "label": "Latino, o subtitulado si no hay"
-        },
-        {
-          "value": "sub",
-          "label": "Solo subtitulado"
-        }
+        { "value": "dub", "label": "Solo latino" },
+        { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
+        { "value": "sub", "label": "Solo subtitulado" }
       ]
     },
     {
@@ -46,14 +33,8 @@
       "type": "select",
       "default": "voe",
       "options": [
-        {
-          "value": "voe",
-          "label": "Voe (720p, funciona en TV)"
-        },
-        {
-          "value": "mp4upload",
-          "label": "MP4Upload (1080p AV1, celular)"
-        }
+        { "value": "voe", "label": "Voe (720p, funciona en TV)" },
+        { "value": "mp4upload", "label": "MP4Upload (1080p AV1, celular)" }
       ]
     }
   ]

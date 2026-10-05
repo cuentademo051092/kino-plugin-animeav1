@@ -19,7 +19,7 @@
     "*.mp4upload.com"
   ],
   "streamHosts": "any",
-  "capabilities": ["search", "episodes", "resolve", "catalog"],
+  "capabilities": ["search", "episodes", "resolve", "catalogs"],
   "catalogs": [
     { "id": "ultimos", "name": "Últimos", "type": "tv" },
     { "id": "emision", "name": "En emisión", "type": "tv" },

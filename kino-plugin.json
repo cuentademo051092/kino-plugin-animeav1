@@ -1,10 +1,10 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Anime en español latino y subtitulado desde animeav1.com con catálogos y selección de calidades.",
+  "description": "Catálogo completo de anime en español latino y subtitulado desde animeav1.com.",
   "hosts": [
     "animeav1.com",
     "*.animeav1.com",
@@ -21,23 +21,16 @@
   "streamHosts": "any",
   "capabilities": ["search", "episodes", "resolve", "catalog"],
   "catalogs": [
-    { "id": "ultimos", "name": "Últimos Episodios" },
-    { "id": "emision", "name": "En Emisión" },
-    { "id": "populares", "name": "Animes Populares" },
-    { "id": "peliculas", "name": "Películas" },
-    { "id": "series", "name": "Series y Animes" }
-  ],
-  "settings": [
-    {
-      "key": "idioma",
-      "label": "Idioma preferido",
-      "type": "select",
-      "default": "dub",
-      "options": [
-        { "value": "dub", "label": "Solo latino" },
-        { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
-        { "value": "sub", "label": "Solo subtitulado" }
-      ]
-    }
+    { "id": "ultimos", "name": "Últimos", "type": "tv" },
+    { "id": "emision", "name": "En emisión", "type": "tv" },
+    { "id": "populares", "name": "Animes Populares", "type": "tv" },
+    { "id": "peliculas", "name": "Películas", "type": "movie" },
+    { "id": "series", "name": "Series", "type": "tv" },
+    { "id": "shounen", "name": "Acción / Shounen", "type": "tv" },
+    { "id": "romance", "name": "Romance / Comedia", "type": "tv" },
+    { "id": "fantasia", "name": "Fantasía / Isekai", "type": "tv" },
+    { "id": "scifi", "name": "Ciencia Ficción / Sobrenatural", "type": "tv" },
+    { "id": "aventura", "name": "Aventura / Drama", "type": "tv" },
+    { "id": "ecchi", "name": "Ecchi / Seinen", "type": "tv" }
   ]
 }

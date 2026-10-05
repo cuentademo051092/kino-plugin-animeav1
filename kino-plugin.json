@@ -9,9 +9,10 @@
     "animeav1.com",
     "cdn.animeav1.com",
     "voe.sx",
-    "jeremyparticipantanything.com",
+    "*.voe.sx",
     "mp4upload.com",
-    "*.mp4upload.com"
+    "*.mp4upload.com",
+    "*"
   ],
   "streamHosts": "any",
   "capabilities": ["search", "episodes", "resolve"],

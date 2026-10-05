@@ -1,48 +1,42 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.3.0",
+  "version": "1.1.0",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Catálogo completo de anime en español latino y subtitulado desde animeav1.com.",
+  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
   "hosts": [
     "animeav1.com",
-    "*.animeav1.com",
     "cdn.animeav1.com",
     "voe.sx",
-    "*.voe.sx",
+    "jeremyparticipantanything.com",
     "teresapoliticallearn.com",
     "*.teresapoliticallearn.com",
-    "jeremyparticipantanything.com",
-    "*.jeremyparticipantanything.com",
     "mp4upload.com",
     "*.mp4upload.com"
   ],
   "streamHosts": "any",
   "capabilities": ["search", "episodes", "resolve"],
-  "catalogs": [
-    { "id": "ultimos", "name": "Últimos Episodios", "type": "tv" },
-    { "id": "emision", "name": "En Emisión", "type": "tv" },
-    { "id": "populares", "name": "Populares", "type": "tv" },
-    { "id": "series", "name": "Series y Animes", "type": "tv" },
-    { "id": "peliculas", "name": "Películas", "type": "movie" },
-    { "id": "shounen", "name": "Acción / Shounen", "type": "tv" },
-    { "id": "romance", "name": "Romance / Comedia", "type": "tv" },
-    { "id": "fantasia", "name": "Fantasía / Isekai", "type": "tv" },
-    { "id": "scifi", "name": "Ciencia Ficción", "type": "tv" },
-    { "id": "aventura", "name": "Aventura / Drama", "type": "tv" },
-    { "id": "ecchi", "name": "Ecchi / Seinen", "type": "tv" }
-  ],
   "settings": [
     {
       "key": "idioma",
-      "label": "Idioma preferido",
+      "label": "Idioma",
       "type": "select",
       "default": "dub",
       "options": [
         { "value": "dub", "label": "Solo latino" },
         { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
         { "value": "sub", "label": "Solo subtitulado" }
+      ]
+    },
+    {
+      "key": "servidor",
+      "label": "Servidor preferido",
+      "type": "select",
+      "default": "voe",
+      "options": [
+        { "value": "voe", "label": "Voe (720p, funciona en TV)" },
+        { "value": "mp4upload", "label": "MP4Upload (1080p AV1, celular)" }
       ]
     }
   ]

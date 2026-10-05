@@ -1,10 +1,10 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Anime en español latino (y subtitulado si lo eliges) desde animeav1.com. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
+  "description": "Anime en español latino y subtitulado desde animeav1.com con catálogos y selección de calidades.",
   "hosts": [
     "animeav1.com",
     "*.animeav1.com",
@@ -19,11 +19,18 @@
     "*.mp4upload.com"
   ],
   "streamHosts": "any",
-  "capabilities": ["search", "episodes", "resolve"],
+  "capabilities": ["search", "episodes", "resolve", "catalog"],
+  "catalogs": [
+    { "id": "ultimos", "name": "Últimos Episodios" },
+    { "id": "emision", "name": "En Emisión" },
+    { "id": "populares", "name": "Animes Populares" },
+    { "id": "peliculas", "name": "Películas" },
+    { "id": "series", "name": "Series y Animes" }
+  ],
   "settings": [
     {
       "key": "idioma",
-      "label": "Idioma",
+      "label": "Idioma preferido",
       "type": "select",
       "default": "dub",
       "options": [
@@ -31,17 +38,6 @@
         { "value": "dub-sub", "label": "Latino, o subtitulado si no hay" },
         { "value": "sub", "label": "Solo subtitulado" }
       ]
-    },
-    {
-      "key": "servidor",
-      "label": "Servidor preferido",
-      "type": "select",
-      "default": "voe",
-      "options": [
-        { "value": "voe", "label": "Voe (720p, funciona en TV)" },
-        { "value": "mp4upload", "label": "MP4Upload (1080p AV1, celular)" }
-      ]
     }
   ]
 }
-

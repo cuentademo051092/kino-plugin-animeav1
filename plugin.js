@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.3.1 (home + categories + HLS + diagnostico temporal)
+// AnimeAV1 for Kino — v1.4.0 (home + categories)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -256,34 +256,7 @@ async function fromVoe(embedUrl) {
   throw new Error("voe: no source in page");
 }
 
-// HLS: the site's own player (player.zilla-networks.com) sits behind Cloudflare and only answers
-// when the request looks like it comes from animeav1.com, so we send that Referer. The page
-// carries an .m3u8 address somewhere in its scripts; we look for it without assuming a layout.
-async function fromHls(embedUrl) {
-  const origin = (embedUrl.match(/^https?:\/\/[^/]+/) || [""])[0];
-  const r = await kino.fetch(embedUrl, {
-    headers: { "User-Agent": BROWSER_UA, Referer: BASE + "/", Origin: BASE },
-  });
-  if (r.status === 403 || r.status === 503) throw new Error("HLS bloqueado (HTTP " + r.status + ")");
-  if (!r.ok) throw new Error("HLS HTTP " + r.status);
-  const html = decodeEscapes(await r.text());
-  const m =
-    html.match(/["'(](https?:\/\/[^"'\s)<>]+\.m3u8[^"'\s)<>]*)/i) ||
-    html.match(/["']((?:\/)[^"'\s)<>]+\.m3u8[^"'\s)<>]*)/i) ||
-    html.match(/["'](?:file|src|source|hls)["']\s*:\s*["']([^"']+)["']/i);
-  if (!m) throw new Error("HLS sin video en el reproductor");
-  let url = m[1];
-  if (url.startsWith("//")) url = "https:" + url;
-  else if (url.startsWith("/")) url = origin + url;
-  return {
-    url,
-    mime: "application/vnd.apple.mpegurl",
-    headers: { Referer: origin + "/", Origin: origin, "User-Agent": BROWSER_UA },
-    expiresInSeconds: 3 * 3600,
-  };
-}
-
-const RESOLVERS = { HLS: fromHls, Voe: fromVoe, MP4Upload: fromMp4Upload };
+const RESOLVERS = { Voe: fromVoe, MP4Upload: fromMp4Upload };
 
 // ---------------------------------------------------------------------------------------------
 // Resolve
@@ -300,14 +273,7 @@ function languagesToTry() {
 }
 
 function serverOrder() {
-  switch (kino.config.get("servidor")) {
-    case "mp4upload":
-      return ["MP4Upload", "HLS", "Voe"];
-    case "voe":
-      return ["Voe", "HLS", "MP4Upload"];
-    default:
-      return ["HLS", "Voe", "MP4Upload"];
-  }
+  return kino.config.get("servidor") === "mp4upload" ? ["MP4Upload", "Voe"] : ["Voe", "MP4Upload"];
 }
 
 export async function resolve(ref) {
@@ -526,64 +492,6 @@ async function withVerifiedBackdrops(items) {
   return [...good, ...rest, ...items.slice(8)];
 }
 
-// TEMPORARY: reports why each server fails, as cards, because Kino has no plugin log.
-function short(s, n) {
-  s = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
-
-async function probePlayer(name, embedUrl) {
-  try {
-    if (name === "HLS") {
-      const origin = (embedUrl.match(/^https?:\/\/[^/]+/) || [""])[0];
-      const r = await kino.fetch(embedUrl, {
-        headers: { "User-Agent": BROWSER_UA, Referer: BASE + "/", Origin: BASE },
-      });
-      const text = await r.text();
-      const m3u8 = /\.m3u8/i.test(decodeEscapes(text));
-      const title = (text.match(/<title>([^<]*)<\/title>/i) || [])[1] || "";
-      return `HLS: HTTP ${r.status}, ${text.length} bytes, m3u8: ${m3u8 ? "SÍ" : "no"}, título: ${short(title, 40)}, inicio: ${short(text.replace(/<[^>]+>/g, " "), 60)} [${origin}]`;
-    }
-    const res = await RESOLVERS[name](embedUrl);
-    return `${name}: OK (${short(res.url, 60)})`;
-  } catch (e) {
-    return `${name}: FALLA - ${short(e && e.message, 110)}`;
-  }
-}
-
-async function diagnosticRow() {
-  const lines = [];
-  try {
-    const d = await loadHome();
-    const ep = (d.latestEpisodes || []).find((e) => e && e.media && e.media.slug);
-    if (!ep) return null;
-    const data = await loadData(`/media/${ep.media.slug}/${ep.number}`, "diag");
-    const embeds = data.embeds || {};
-    const lang = (embeds.DUB || []).length ? "DUB" : "SUB";
-    lines.push(`Prueba: ${short(ep.media.title, 40)} ep ${ep.number} (${lang})`);
-    const offered = (embeds[lang] || []).map((e) => e.server).join(", ");
-    lines.push("Servidores del sitio: " + offered);
-    for (const name of ["HLS", "Voe", "MP4Upload"]) {
-      const e = (embeds[lang] || []).find((x) => x.server === name);
-      lines.push(e ? await probePlayer(name, e.url) : `${name}: no ofrecido`);
-    }
-  } catch (e) {
-    lines.push("Diagnóstico falló: " + short(e && e.message, 150));
-  }
-  return {
-    id: "diag",
-    title: "Diagnóstico (temporal)",
-    items: lines.map((l, i) => ({
-      id: "diag-" + i,
-      ref: "diag",
-      title: short(l, 150),
-      kind: "movie",
-      overview: l,
-      genres: ["Anime"],
-    })),
-  };
-}
-
 export async function home() {
   const defs = [
     ["emi", "En emisión", "emi", null],
@@ -593,14 +501,13 @@ export async function home() {
     ["serie", "Series", "serie", "Serie"],
     ...GENEROS.map(([slug, name, group]) => ["gen-" + slug, name, "gen:" + slug, group]),
   ];
-  const [rowsRaw, diag] = await Promise.all([Promise.all(defs.map(buildRow)), diagnosticRow()]);
+  const rowsRaw = await Promise.all(defs.map(buildRow));
   const rows = rowsRaw.filter(Boolean);
   if (rows.length > 0) {
     try {
       rows[0].items = await withVerifiedBackdrops(rows[0].items);
     } catch (_) {}
   }
-  if (diag) rows.push(diag);
   if (rows.length === 0) throw kino.error("unavailable", "home: no rows could be built");
   return rows;
 }

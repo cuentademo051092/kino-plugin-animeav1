@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.4.0 (home + categories)
+// AnimeAV1 for Kino — v1.4.1 (home + categories)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -332,20 +332,22 @@ export async function resolve(ref) {
 const ROW_LIMIT = 60;
 const PAGE_LIMIT = 100;
 
-// [slug on the site, name shown, genre group in Kino's Categorías]
+// [slug on the site, name shown]. Kino's Categorías only accepts a closed list of groups
+// (peliculas, series, anime, infantil, documentales, deportes, noticias, musica,
+// entretenimiento, otros), so every genre row goes under "anime".
 const GENEROS = [
-  ["accion", "Acción", "Acción"],
-  ["aventura", "Aventura", "Aventura"],
-  ["comedia", "Comedia", "Comedia"],
-  ["drama", "Drama", "Drama"],
-  ["fantasia", "Fantasía", "Fantasía"],
-  ["ciencia-ficcion", "Ciencia ficción", "Ciencia ficción"],
-  ["romance", "Romance", "Romance"],
-  ["shounen", "Shounen", "Anime"],
-  ["misterio", "Misterio", "Misterio"],
-  ["terror", "Terror", "Terror"],
-  ["deportes", "Deportes", "Anime"],
-  ["slice-of-life", "Slice of life", "Anime"],
+  ["accion", "Acción"],
+  ["aventura", "Aventura"],
+  ["comedia", "Comedia"],
+  ["drama", "Drama"],
+  ["fantasia", "Fantasía"],
+  ["ciencia-ficcion", "Ciencia ficción"],
+  ["romance", "Romance"],
+  ["shounen", "Shounen"],
+  ["misterio", "Misterio"],
+  ["terror", "Terror"],
+  ["deportes", "Deportes"],
+  ["slice-of-life", "Slice of life"],
 ];
 
 const ORDER_CANDIDATES = ["popular", "popularity", "views", "score", "rating"];
@@ -464,21 +466,31 @@ async function buildRow(def) {
   return row;
 }
 
-// Keeps only backdrops that exist, and puts the items that have one first (the app's banner
-// uses the first item of the first row).
-async function withVerifiedBackdrops(items) {
-  const head = items.slice(0, 8);
-  const checks = await Promise.all(
-    head.map(async (it) => {
-      if (!it.backdrop) return false;
-      try {
-        const r = await kino.fetch(it.backdrop, { method: "HEAD" });
-        return !!r.ok;
-      } catch (_) {
-        return false;
-      }
-    })
-  );
+// Keeps only backdrops that exist and puts items that have one first: the app uses the first
+// item's backdrop as the cover of each category tile (and the banner for the first row).
+// If none of the checked items has a backdrop, the first item falls back to its poster.
+const backdropOk = new Map();
+async function hasBackdrop(it) {
+  if (!it.backdrop) return false;
+  if (!backdropOk.has(it.backdrop)) {
+    backdropOk.set(
+      it.backdrop,
+      (async () => {
+        try {
+          const r = await kino.fetch(it.backdrop, { method: "HEAD" });
+          return !!r.ok;
+        } catch (_) {
+          return false;
+        }
+      })()
+    );
+  }
+  return backdropOk.get(it.backdrop);
+}
+
+async function withVerifiedBackdrops(items, n) {
+  const head = items.slice(0, n);
+  const checks = await Promise.all(head.map(hasBackdrop));
   const good = [];
   const rest = [];
   head.forEach((it, i) => {
@@ -489,25 +501,29 @@ async function withVerifiedBackdrops(items) {
       rest.push(copy);
     }
   });
-  return [...good, ...rest, ...items.slice(8)];
+  const out = [...good, ...rest, ...items.slice(n)];
+  if (good.length === 0 && out.length > 0 && out[0].poster) out[0].backdrop = out[0].poster;
+  return out;
 }
 
 export async function home() {
   const defs = [
-    ["emi", "En emisión", "emi", null],
+    ["emi", "En emisión", "emi", "anime"],
     ["eps", "Últimos episodios", "eps", null],
-    ["ord", "Populares", "ord", null],
-    ["peli", "Películas", "peli", "Película"],
-    ["serie", "Series", "serie", "Serie"],
-    ...GENEROS.map(([slug, name, group]) => ["gen-" + slug, name, "gen:" + slug, group]),
+    ["ord", "Populares", "ord", "anime"],
+    ["peli", "Películas", "peli", "peliculas"],
+    ["serie", "Series", "serie", "series"],
+    ...GENEROS.map(([slug, name]) => ["gen-" + slug, name, "gen:" + slug, "anime"]),
   ];
   const rowsRaw = await Promise.all(defs.map(buildRow));
   const rows = rowsRaw.filter(Boolean);
-  if (rows.length > 0) {
-    try {
-      rows[0].items = await withVerifiedBackdrops(rows[0].items);
-    } catch (_) {}
-  }
+  await Promise.all(
+    rows.map(async (row, i) => {
+      try {
+        row.items = await withVerifiedBackdrops(row.items, i === 0 ? 8 : 4);
+      } catch (_) {}
+    })
+  );
   if (rows.length === 0) throw kino.error("unavailable", "home: no rows could be built");
   return rows;
 }

@@ -1,7 +1,7 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "apiVersion": 4,
   "entry": "plugin.js",
   "description": "Anime en español latino (y subtitulado si no hay) desde animeav1.com, con catálogo en Inicio y Categorías. Usa HLS, Voe o MP4Upload según haya.",

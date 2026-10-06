@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.3.0 (home + categories + HLS)
+// AnimeAV1 for Kino — v1.3.1 (home + categories + HLS + diagnostico temporal)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -498,6 +498,92 @@ async function buildRow(def) {
   return row;
 }
 
+// Keeps only backdrops that exist, and puts the items that have one first (the app's banner
+// uses the first item of the first row).
+async function withVerifiedBackdrops(items) {
+  const head = items.slice(0, 8);
+  const checks = await Promise.all(
+    head.map(async (it) => {
+      if (!it.backdrop) return false;
+      try {
+        const r = await kino.fetch(it.backdrop, { method: "HEAD" });
+        return !!r.ok;
+      } catch (_) {
+        return false;
+      }
+    })
+  );
+  const good = [];
+  const rest = [];
+  head.forEach((it, i) => {
+    if (checks[i]) good.push(it);
+    else {
+      const copy = Object.assign({}, it);
+      delete copy.backdrop;
+      rest.push(copy);
+    }
+  });
+  return [...good, ...rest, ...items.slice(8)];
+}
+
+// TEMPORARY: reports why each server fails, as cards, because Kino has no plugin log.
+function short(s, n) {
+  s = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+async function probePlayer(name, embedUrl) {
+  try {
+    if (name === "HLS") {
+      const origin = (embedUrl.match(/^https?:\/\/[^/]+/) || [""])[0];
+      const r = await kino.fetch(embedUrl, {
+        headers: { "User-Agent": BROWSER_UA, Referer: BASE + "/", Origin: BASE },
+      });
+      const text = await r.text();
+      const m3u8 = /\.m3u8/i.test(decodeEscapes(text));
+      const title = (text.match(/<title>([^<]*)<\/title>/i) || [])[1] || "";
+      return `HLS: HTTP ${r.status}, ${text.length} bytes, m3u8: ${m3u8 ? "SÍ" : "no"}, título: ${short(title, 40)}, inicio: ${short(text.replace(/<[^>]+>/g, " "), 60)} [${origin}]`;
+    }
+    const res = await RESOLVERS[name](embedUrl);
+    return `${name}: OK (${short(res.url, 60)})`;
+  } catch (e) {
+    return `${name}: FALLA - ${short(e && e.message, 110)}`;
+  }
+}
+
+async function diagnosticRow() {
+  const lines = [];
+  try {
+    const d = await loadHome();
+    const ep = (d.latestEpisodes || []).find((e) => e && e.media && e.media.slug);
+    if (!ep) return null;
+    const data = await loadData(`/media/${ep.media.slug}/${ep.number}`, "diag");
+    const embeds = data.embeds || {};
+    const lang = (embeds.DUB || []).length ? "DUB" : "SUB";
+    lines.push(`Prueba: ${short(ep.media.title, 40)} ep ${ep.number} (${lang})`);
+    const offered = (embeds[lang] || []).map((e) => e.server).join(", ");
+    lines.push("Servidores del sitio: " + offered);
+    for (const name of ["HLS", "Voe", "MP4Upload"]) {
+      const e = (embeds[lang] || []).find((x) => x.server === name);
+      lines.push(e ? await probePlayer(name, e.url) : `${name}: no ofrecido`);
+    }
+  } catch (e) {
+    lines.push("Diagnóstico falló: " + short(e && e.message, 150));
+  }
+  return {
+    id: "diag",
+    title: "Diagnóstico (temporal)",
+    items: lines.map((l, i) => ({
+      id: "diag-" + i,
+      ref: "diag",
+      title: short(l, 150),
+      kind: "movie",
+      overview: l,
+      genres: ["Anime"],
+    })),
+  };
+}
+
 export async function home() {
   const defs = [
     ["emi", "En emisión", "emi", null],
@@ -507,7 +593,14 @@ export async function home() {
     ["serie", "Series", "serie", "Serie"],
     ...GENEROS.map(([slug, name, group]) => ["gen-" + slug, name, "gen:" + slug, group]),
   ];
-  const rows = (await Promise.all(defs.map(buildRow))).filter(Boolean);
+  const [rowsRaw, diag] = await Promise.all([Promise.all(defs.map(buildRow)), diagnosticRow()]);
+  const rows = rowsRaw.filter(Boolean);
+  if (rows.length > 0) {
+    try {
+      rows[0].items = await withVerifiedBackdrops(rows[0].items);
+    } catch (_) {}
+  }
+  if (diag) rows.push(diag);
   if (rows.length === 0) throw kino.error("unavailable", "home: no rows could be built");
   return rows;
 }

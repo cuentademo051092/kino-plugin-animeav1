@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.1.0
+// AnimeAV1 for Kino — v1.2.0 (home + categories)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -308,4 +308,179 @@ export async function resolve(ref) {
     );
   }
   throw kino.error("unavailable", failures.join("; "));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Home and categories (v1.2.0)
+//
+// The site filters its catalog with query params: page, order, status, genre, category, minYear,
+// maxYear, search. Their accepted VALUES for order/status are not documented, so the plugin tries
+// a few likely ones and keeps the first that really changes the results. A row that cannot be
+// built is simply left out; it never breaks the others.
+
+const ROW_LIMIT = 60;
+const PAGE_LIMIT = 100;
+
+// [slug on the site, name shown, genre group in Kino's Categorías]
+const GENEROS = [
+  ["accion", "Acción", "Acción"],
+  ["aventura", "Aventura", "Aventura"],
+  ["comedia", "Comedia", "Comedia"],
+  ["drama", "Drama", "Drama"],
+  ["fantasia", "Fantasía", "Fantasía"],
+  ["ciencia-ficcion", "Ciencia ficción", "Ciencia ficción"],
+  ["romance", "Romance", "Romance"],
+  ["shounen", "Shounen", "Anime"],
+  ["misterio", "Misterio", "Misterio"],
+  ["terror", "Terror", "Terror"],
+  ["deportes", "Deportes", "Anime"],
+  ["slice-of-life", "Slice of life", "Anime"],
+];
+
+const ORDER_CANDIDATES = ["popular", "popularity", "views", "score", "rating"];
+const STATUS_CANDIDATES = ["emision", "en-emision", "airing", "1"];
+const MOVIE_CANDIDATES = ["pelicula", "peliculas", "movie"];
+
+async function loadCatalog(params, page) {
+  const qs = Object.keys(params)
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .concat(page > 1 ? [`page=${page}`] : [])
+    .join("&");
+  const r = await kino.fetch(`${BASE}/catalogo/__data.json${qs ? "?" + qs : ""}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (r.status === 429) throw kino.error("rate_limited", "catalog: HTTP 429");
+  if (!r.ok) throw kino.error("unavailable", "catalog: HTTP " + r.status);
+  const body = await r.json();
+  const nodes = (body.nodes || []).filter((n) => n && n.type === "data" && Array.isArray(n.data));
+  const data = nodes.length ? unflatten(nodes[nodes.length - 1].data) : {};
+  const raw = (data.results || []).filter((m) => m && m.id != null && m.slug && m.title);
+  return {
+    raw,
+    items: raw.map(toItem),
+    totalPages: (data.pagination && data.pagination.totalPages) || 1,
+    orderKey: data.orderKey,
+  };
+}
+
+let baselineIds = null;
+async function baseline() {
+  if (!baselineIds) {
+    const b = await loadCatalog({}, 1);
+    baselineIds = b.raw.slice(0, 10).map((m) => m.id).join(",");
+  }
+  return baselineIds;
+}
+
+// Tries each candidate params object; returns the first one whose results differ from the
+// unfiltered catalog (or whose orderKey is no longer "default").
+async function pickParams(candidates, extra) {
+  const base = await baseline();
+  for (const c of candidates) {
+    try {
+      const p = Object.assign({}, extra, c);
+      const res = await loadCatalog(p, 1);
+      const ids = res.raw.slice(0, 10).map((m) => m.id).join(",");
+      if (res.raw.length > 0 && (ids !== base || (res.orderKey && res.orderKey !== "default"))) {
+        return p;
+      }
+    } catch (e) {
+      kino.log("animeav1 probe failed:", JSON.stringify(c), e && e.message);
+    }
+  }
+  return null;
+}
+
+// Rows are described by a ref string: "ord", "emi", "peli", "serie", "eps", "gen:<slug>".
+async function paramsFor(ref) {
+  if (ref === "ord") return pickParams(ORDER_CANDIDATES.map((o) => ({ order: o })));
+  if (ref === "emi") return pickParams(STATUS_CANDIDATES.map((s) => ({ status: s })));
+  if (ref === "peli") return pickParams(MOVIE_CANDIDATES.map((c) => ({ category: c })));
+  if (ref.startsWith("gen:")) return { genre: ref.slice(4) };
+  return null;
+}
+
+function mediaFromEpisode(e) {
+  const m = e && e.media;
+  if (!m || m.id == null || !m.slug || !m.title) return null;
+  const it = toItem(m);
+  if (e.number != null) it.badges = ["EP " + e.number];
+  return it;
+}
+
+let homeCache = null;
+async function loadHome() {
+  if (!homeCache) homeCache = await loadData("", "home");
+  return homeCache;
+}
+
+function dedupe(items) {
+  const seen = new Set();
+  return items.filter((it) => !seen.has(it.id) && seen.add(it.id));
+}
+
+async function buildRow(def) {
+  const [id, title, ref, genre] = def;
+  let items = [];
+  try {
+    if (id === "eps") {
+      const d = await loadHome();
+      items = dedupe((d.latestEpisodes || []).map(mediaFromEpisode).filter(Boolean));
+    } else if (id === "serie") {
+      const res = await loadCatalog({}, 1);
+      const raw = res.raw.filter((m) => !isMovie(m));
+      items = raw.map(toItem);
+    } else {
+      const p = await paramsFor(ref);
+      if (p) items = (await loadCatalog(p, 1)).items;
+      else if (id === "emi") {
+        // Fallback: what got a new episode lately is what is airing.
+        const d = await loadHome();
+        items = dedupe((d.latestEpisodes || []).map(mediaFromEpisode).filter(Boolean));
+      }
+    }
+  } catch (e) {
+    kino.log("animeav1 row", id, "failed:", e && e.message);
+  }
+  if (items.length === 0) return null;
+  const row = { id, title, items: items.slice(0, ROW_LIMIT) };
+  if (id !== "eps") row.ref = ref;
+  if (genre) row.genre = genre;
+  return row;
+}
+
+export async function home() {
+  const defs = [
+    ["eps", "Últimos episodios", "eps", null],
+    ["emi", "En emisión", "emi", null],
+    ["ord", "Populares", "ord", null],
+    ["peli", "Películas", "peli", "Película"],
+    ["serie", "Series", "serie", "Serie"],
+    ...GENEROS.map(([slug, name, group]) => ["gen-" + slug, name, "gen:" + slug, group]),
+  ];
+  const rows = (await Promise.all(defs.map(buildRow))).filter(Boolean);
+  if (rows.length === 0) throw kino.error("unavailable", "home: no rows could be built");
+  return rows;
+}
+
+export async function browse(ref, cursor) {
+  const page = Math.max(1, parseInt(cursor, 10) || 1);
+  ref = String(ref);
+  let res;
+  if (ref === "eps") {
+    const d = await loadHome();
+    return { items: dedupe((d.latestEpisodes || []).map(mediaFromEpisode).filter(Boolean)).slice(0, PAGE_LIMIT) };
+  }
+  if (ref === "serie") {
+    res = await loadCatalog({}, page);
+    res.items = res.raw.filter((m) => !isMovie(m)).map(toItem);
+  } else {
+    const p = await paramsFor(ref);
+    if (!p) throw kino.error("unavailable", "browse: filter not supported " + ref);
+    res = await loadCatalog(p, page);
+  }
+  return {
+    items: dedupe(res.items).slice(0, PAGE_LIMIT),
+    next: page < res.totalPages ? String(page + 1) : undefined,
+  };
 }

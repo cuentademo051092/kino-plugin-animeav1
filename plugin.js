@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.2.1 (home + categories)
+// AnimeAV1 for Kino — v1.3.0 (home + categories + HLS)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -256,7 +256,34 @@ async function fromVoe(embedUrl) {
   throw new Error("voe: no source in page");
 }
 
-const RESOLVERS = { Voe: fromVoe, MP4Upload: fromMp4Upload };
+// HLS: the site's own player (player.zilla-networks.com) sits behind Cloudflare and only answers
+// when the request looks like it comes from animeav1.com, so we send that Referer. The page
+// carries an .m3u8 address somewhere in its scripts; we look for it without assuming a layout.
+async function fromHls(embedUrl) {
+  const origin = (embedUrl.match(/^https?:\/\/[^/]+/) || [""])[0];
+  const r = await kino.fetch(embedUrl, {
+    headers: { "User-Agent": BROWSER_UA, Referer: BASE + "/", Origin: BASE },
+  });
+  if (r.status === 403 || r.status === 503) throw new Error("HLS bloqueado (HTTP " + r.status + ")");
+  if (!r.ok) throw new Error("HLS HTTP " + r.status);
+  const html = decodeEscapes(await r.text());
+  const m =
+    html.match(/["'(](https?:\/\/[^"'\s)<>]+\.m3u8[^"'\s)<>]*)/i) ||
+    html.match(/["']((?:\/)[^"'\s)<>]+\.m3u8[^"'\s)<>]*)/i) ||
+    html.match(/["'](?:file|src|source|hls)["']\s*:\s*["']([^"']+)["']/i);
+  if (!m) throw new Error("HLS sin video en el reproductor");
+  let url = m[1];
+  if (url.startsWith("//")) url = "https:" + url;
+  else if (url.startsWith("/")) url = origin + url;
+  return {
+    url,
+    mime: "application/vnd.apple.mpegurl",
+    headers: { Referer: origin + "/", Origin: origin, "User-Agent": BROWSER_UA },
+    expiresInSeconds: 3 * 3600,
+  };
+}
+
+const RESOLVERS = { HLS: fromHls, Voe: fromVoe, MP4Upload: fromMp4Upload };
 
 // ---------------------------------------------------------------------------------------------
 // Resolve
@@ -273,7 +300,14 @@ function languagesToTry() {
 }
 
 function serverOrder() {
-  return kino.config.get("servidor") === "mp4upload" ? ["MP4Upload", "Voe"] : ["Voe", "MP4Upload"];
+  switch (kino.config.get("servidor")) {
+    case "mp4upload":
+      return ["MP4Upload", "HLS", "Voe"];
+    case "voe":
+      return ["Voe", "HLS", "MP4Upload"];
+    default:
+      return ["HLS", "Voe", "MP4Upload"];
+  }
 }
 
 export async function resolve(ref) {
@@ -415,7 +449,11 @@ function mediaFromEpisode(e) {
   const m = e && e.media;
   if (!m || m.id == null || !m.slug || !m.title) return null;
   const it = toItem(m);
-  if (e.number != null) it.badges = ["EP " + e.number];
+  if (e.number != null) {
+    it.badges = ["EP " + e.number];
+    // New shows often lack a backdrop; the latest episode's screenshot always exists.
+    it.backdrop = `${CDN}/screenshots/${it.id}/${e.number}.jpg`;
+  }
   return it;
 }
 
@@ -462,8 +500,8 @@ async function buildRow(def) {
 
 export async function home() {
   const defs = [
-    ["eps", "Últimos episodios", "eps", null],
     ["emi", "En emisión", "emi", null],
+    ["eps", "Últimos episodios", "eps", null],
     ["ord", "Populares", "ord", null],
     ["peli", "Películas", "peli", "Película"],
     ["serie", "Series", "serie", "Serie"],

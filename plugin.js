@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.2.0 (home + categories)
+// AnimeAV1 for Kino — v1.2.1 (home + categories)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -278,8 +278,19 @@ function serverOrder() {
 
 export async function resolve(ref) {
   const [slug, rawNum] = String(ref).split("/");
-  const number = rawNum || "1";
-  const data = await loadData(`/media/${slug}/${number}`, "resolve");
+  let number = rawNum || "1";
+  let data;
+  try {
+    data = await loadData(`/media/${slug}/${number}`, "resolve");
+  } catch (e) {
+    // A movie (bare slug) may not have an episode "1": use the first one the site lists.
+    if (rawNum) throw e;
+    const media = (await loadData(`/media/${slug}`, "resolve")).media || {};
+    const nums = (media.episodes || []).map((x) => Number(x && x.number)).filter((n) => n >= 0);
+    if (nums.length === 0) throw e;
+    number = String(Math.min(...nums));
+    data = await loadData(`/media/${slug}/${number}`, "resolve");
+  }
   const embeds = data.embeds || {};
 
   const langs = languagesToTry();
@@ -300,7 +311,7 @@ export async function resolve(ref) {
     }
   }
 
-  const offered = Object.keys(embeds).join(", ") || "none";
+  const offered = Object.keys(embeds).filter((k) => (embeds[k] || []).length).join(", ") || "none";
   if (failures.length === 0) {
     throw kino.error(
       "not_found",

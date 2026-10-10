@@ -1,10 +1,10 @@
 {
   "id": "animeav1",
   "name": "AnimeAV1",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "apiVersion": 4,
   "entry": "plugin.js",
-  "description": "Anime en español latino (y subtitulado si no hay) desde animeav1.com, con catálogo en Inicio y Categorías. Prefiere Voe (H.264 720p), que funciona en cualquier TV.",
+  "description": "Anime en español latino (y subtitulado si no hay) desde animeav1.com, con catálogo en Inicio y Categorías. Prueba Voe, UPNShare, MP4Upload, YourUpload y StreamTape hasta encontrar uno que reproduzca.",
   "hosts": [
     "animeav1.com",
     "cdn.animeav1.com",
@@ -12,7 +12,14 @@
     "jeremyparticipantanything.com",
     "teresapoliticallearn.com",
     "mp4upload.com",
-    "*.mp4upload.com"
+    "*.mp4upload.com",
+    "yourupload.com",
+    "*.yourupload.com",
+    "vidcache.net",
+    "streamtape.com",
+    "tapecontent.net",
+    "*.tapecontent.net",
+    "*.uns.bio"
   ],
   "streamHosts": "any",
   "capabilities": [
@@ -54,8 +61,20 @@
           "label": "Voe (720p, funciona en TV)"
         },
         {
+          "value": "upnshare",
+          "label": "UPNShare (hasta 1080p, funciona en TV)"
+        },
+        {
           "value": "mp4upload",
           "label": "MP4Upload (1080p AV1, celular)"
+        },
+        {
+          "value": "yourupload",
+          "label": "YourUpload (mp4)"
+        },
+        {
+          "value": "streamtape",
+          "label": "StreamTape (mp4)"
         }
       ]
     }

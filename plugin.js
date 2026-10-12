@@ -1,4 +1,4 @@
-// AnimeAV1 for Kino — v1.5.0 (home + categories, 5 servers)
+// AnimeAV1 for Kino — v1.6.0 (home + categories, 5 servers)
 //
 // Why Voe comes first: MP4Upload serves AnimeAV1's files as AV1 10-bit at 1440x1080. A phone
 // decodes that in software, but most Android TVs and Fire TV Sticks have no AV1 decoder and
@@ -779,6 +779,50 @@ export async function home() {
   );
   if (rows.length === 0) throw kino.error("unavailable", "home: no rows could be built");
   return rows;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Own section (v1.6.0): the tabbed screen with the plugin's name and color, like the TMDB plugin.
+// Kino calls section({ tab }) and expects { tabs, tab, rows, hero? }.
+
+const SECTION_TABS = [
+  { id: "inicio", label: "Inicio" },
+  { id: "peliculas", label: "Películas" },
+  { id: "series", label: "Series" },
+  { id: "generos", label: "Géneros" },
+];
+
+function defsForTab(tab) {
+  if (tab === "peliculas") return [["peli", "Películas", "peli", "peliculas"]];
+  if (tab === "series") return [["serie", "Series", "serie", "series"]];
+  if (tab === "generos") return GENEROS.map(([slug, name]) => ["gen-" + slug, name, "gen:" + slug, "anime"]);
+  return [
+    ["emi", "En emisión", "emi", "anime"],
+    ["eps", "Últimos episodios", "eps", null],
+    ["ord", "Populares", "ord", "anime"],
+  ];
+}
+
+export async function section(arg) {
+  const wanted = arg && arg.tab ? String(arg.tab) : "inicio";
+  const tab = SECTION_TABS.some((t) => t.id === wanted) ? wanted : "inicio";
+  const rowsRaw = await Promise.all(defsForTab(tab).map(buildRow));
+  const rows = rowsRaw.filter(Boolean);
+  await Promise.all(
+    rows.map(async (row, i) => {
+      try {
+        row.items = await withVerifiedBackdrops(row.items, i === 0 ? 8 : 4);
+      } catch (_) {}
+    })
+  );
+  if (rows.length === 0) throw kino.error("unavailable", "section: no rows for tab " + tab);
+  const answer = { tabs: SECTION_TABS, tab, rows };
+  const star = (rows[0].items || []).filter((it) => it.backdrop)[0];
+  if (star) {
+    answer.hero = { title: star.title, image: star.backdrop };
+    if (star.overview) answer.hero.text = star.overview.slice(0, 300);
+  }
+  return answer;
 }
 
 export async function browse(ref, cursor) {
